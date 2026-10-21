@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "no-nested-ternary": "error",
+    "prefer-const": "error",
+    "no-param-reassign": "error",
+    "no-else-return": "error",
+    "typescript/consistent-type-definitions": ["error", "type"]
+  },
+  "overrides": [
+    {
+      "files": ["src/**", "bin/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          { "paths": [{ "name": "effect/process", "message": "Start processes through the Shell service (src/Shell.ts) only." }] }
+        ]
+      }
+    },
+    {
+      "files": ["src/Shell.ts"],
+      "rules": { "no-restricted-imports": "off" }
+    }
+  ]
+}

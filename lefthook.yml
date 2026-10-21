@@ -1,0 +1,19 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      run: pnpm run --silent format:check
+    - name: lint
+      run: pnpm run --silent lint
+    - name: typecheck
+      run: pnpm run --silent typecheck
+
+commit-msg:
+  jobs:
+    - name: no AI attribution
+      run: node --experimental-strip-types --no-warnings tools/attribution.ts {1}
+
+pre-push:
+  jobs:
+    - name: test
+      run: pnpm run --silent test
