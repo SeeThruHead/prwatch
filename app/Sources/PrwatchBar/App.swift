@@ -171,8 +171,8 @@ struct MenuContent: View {
       Toggle("Open at login", isOn: Binding(get: { watch.openAtLogin }, set: { watch.setOpenAtLogin($0) }))
         .toggleStyle(.checkbox).font(.system(size: 11))
       HStack {
-        if watch.cliInstalled {
-          Text("prwatch command in ~/.local/bin").font(.system(size: 11)).foregroundStyle(.secondary)
+        if let location = watch.cliLocation {
+          Text("prwatch command at \(location.replacingOccurrences(of: NSHomeDirectory(), with: "~"))").font(.system(size: 11)).foregroundStyle(.secondary)
         } else {
           Button("Install command line tool") { watch.installCli() }.buttonStyle(.link).font(.system(size: 11))
         }

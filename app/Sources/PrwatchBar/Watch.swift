@@ -8,7 +8,7 @@ final class Watch: ObservableObject {
   @Published private(set) var status: Status?
   @Published private(set) var now = Date()
   @Published private(set) var watcherRunning = false
-  @Published private(set) var cliInstalled = false
+  @Published private(set) var cliLocation: String?
   @Published private(set) var openAtLogin = SMAppService.mainApp.status == .enabled
 
   private var timer: Timer?
@@ -43,9 +43,21 @@ final class Watch: ObservableObject {
     FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/prwatch")
   }
 
+  static let cliCandidates = ["/opt/homebrew/bin/prwatch", "/usr/local/bin/prwatch"]
+
+  var cliInstalled: Bool { cliLocation != nil }
+
+  private func installedCli() -> String? {
+    let target = URL(fileURLWithPath: helper).resolvingSymlinksInPath().path
+    return (Self.cliCandidates + [Self.cliLink.path]).first { candidate in
+      FileManager.default.fileExists(atPath: candidate)
+        && URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path == target
+    }
+  }
+
   func reload() {
     now = Date()
-    cliInstalled = (try? FileManager.default.destinationOfSymbolicLink(atPath: Self.cliLink.path)) == helper
+    cliLocation = installedCli()
     let file = home.appendingPathComponent("status.json")
     guard let data = try? Data(contentsOf: file) else {
       status = nil
