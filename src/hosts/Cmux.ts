@@ -12,7 +12,7 @@ const Workspaces = Schema.Struct({
   workspaces: Schema.Array(Schema.Struct({ id: Schema.String, title: Schema.String }))
 })
 
-const fields = (text: string): ReadonlyMap<string, string> =>
+export const fields = (text: string): ReadonlyMap<string, string> =>
   new Map(
     text
       .split("\n")
@@ -23,7 +23,12 @@ const fields = (text: string): ReadonlyMap<string, string> =>
       })
   )
 
-const statusOf = (value: string) => {
+const PASTE_START = "\u001b[200~"
+const PASTE_END = "\u001b[201~"
+
+export const bracketed = (text: string) => `${PASTE_START}${text}${PASTE_END}`
+
+export const statusOf = (value: string) => {
   const state = value.split(" ")[0] ?? ""
   if (state === "Running") return "working" as const
   if (state === "Idle") return "idle" as const
@@ -31,7 +36,7 @@ const statusOf = (value: string) => {
   return "blocked" as const
 }
 
-const agentStatus = (sidebar: ReadonlyMap<string, string>) =>
+export const agentStatus = (sidebar: ReadonlyMap<string, string>) =>
   AGENT_STATUS_KEYS.flatMap((key) => {
     const value = sidebar.get(key)
     return value === undefined ? [] : [{ key, status: statusOf(value) }]
@@ -65,7 +70,7 @@ export const CmuxHost = Layer.effect(
       const failed = (error: { readonly message: string }) => new DeliveryFailed({ host: NAME, agent, reason: error.message })
       const buffer = `prwatch-${agent.replace(/\W/g, "")}`
 
-      yield* cmux(["set-buffer", "--name", buffer, text]).pipe(Effect.mapError(failed))
+      yield* cmux(["set-buffer", "--name", buffer, bracketed(text)]).pipe(Effect.mapError(failed))
       yield* cmux(["paste-buffer", "--name", buffer, "--workspace", agent]).pipe(Effect.mapError(failed))
       yield* cmux(["send-key", "--workspace", agent, "enter"]).pipe(Effect.mapError(failed))
     })
