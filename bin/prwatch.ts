@@ -5,6 +5,7 @@ import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
 import { GitHub } from "../src/GitHub.ts"
+import { CmuxHost } from "../src/hosts/Cmux.ts"
 import { HerdrHost } from "../src/hosts/Herdr.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
@@ -14,8 +15,8 @@ import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
 import { Workspace } from "../src/Workspace.ts"
 
-const hostFlag = Flag.Literals("host", ["auto", "herdr", "tmux"]).pipe(
-  Flag.withDescription("where your agents run; auto picks herdr when it answers, otherwise tmux"),
+const hostFlag = Flag.Literals("host", ["auto", "herdr", "cmux", "tmux"]).pipe(
+  Flag.withDescription("where your agents run; auto picks the first that answers: herdr, cmux, then tmux"),
   Flag.withDefault("auto")
 )
 const dryRun = Flag.Boolean("dry-run").pipe(Flag.withDescription("print what would be sent instead of sending it"), Flag.withDefault(false))
@@ -33,24 +34,32 @@ const interval = Flag.Int("interval").pipe(
   Flag.withDefault(60)
 )
 
-const detectHost = Effect.gen(function* () {
-  const shell = yield* Shell
-  const herdr = yield* shell.run("herdr", ["agent", "list"]).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false)
+type HostName = "auto" | "herdr" | "cmux" | "tmux"
+
+const answers = (command: string, args: readonly string[]) =>
+  Effect.flatMap(Shell, (shell) =>
+    shell.run(command, args).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false)
+    )
   )
 
-  return herdr ? HerdrHost : TmuxHost
+const detectHost = Effect.gen(function* () {
+  if (yield* answers("herdr", ["agent", "list"])) return HerdrHost
+  if (yield* answers("cmux", ["ping"])) return CmuxHost
+
+  return TmuxHost
 })
 
-const hostLayer = (host: "auto" | "herdr" | "tmux") => {
+const hostLayer = (host: HostName) => {
   if (host === "herdr") return HerdrHost
+  if (host === "cmux") return CmuxHost
   if (host === "tmux") return TmuxHost
 
   return Layer.unwrap(detectHost)
 }
 
-const watcherLayer = (host: "auto" | "herdr" | "tmux") =>
+const watcherLayer = (host: HostName) =>
   Watcher.layer.pipe(Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, hostLayer(host))), Layer.provide(Shell.layer))
 
 const run = Command.make(
@@ -113,13 +122,14 @@ const keyOf = (input: string) => {
 
 const callerPane = Effect.gen(function* () {
   const herdr = yield* Config.String("HERDR_PANE_ID").pipe(Config.withDefault(""))
+  const cmux = yield* Config.String("CMUX_WORKSPACE_ID").pipe(Config.withDefault(""))
   const tmux = yield* Config.String("TMUX_PANE").pipe(Config.withDefault(""))
 
-  return herdr || tmux
+  return herdr || cmux || tmux
 })
 
 const agentFlag = Flag.String("agent").pipe(
-  Flag.withDescription("the pane id to send to; defaults to the pane this runs in ($HERDR_PANE_ID or $TMUX_PANE)"),
+  Flag.withDescription("the pane id to send to; defaults to the pane this runs in ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID or $TMUX_PANE)"),
   Flag.withDefault("")
 )
 

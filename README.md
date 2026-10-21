@@ -38,7 +38,9 @@ node bin/prwatch.ts run
 | herdr | `herdr agent list` (agent, status, working directory)                                                                                                       | `herdr agent prompt`        | `herdr notification show` |
 | tmux  | panes whose current command is a known agent (`claude`, `codex`, `opencode`, `gemini`, `pi`, `amp`, `aider`, `cursor-agent`, plus `PRWATCH_AGENT_COMMANDS`) | a bracketed paste and Enter | `tmux display-message`    |
 
-`--host auto` (the default) uses herdr when it answers and tmux otherwise. Agents that herdr reports as blocked on a question are skipped, so a message never answers an approval prompt for you. Agents that are busy still get the message; Claude Code, Codex and the rest queue typed input until they finish.
+cmux only lets processes started inside cmux use its socket by default. prwatch runs outside it, so set cmux's socket access to password in its settings (the `cmux` CLI reads the password from the keychain), or launch cmux with `CMUX_SOCKET_MODE=allowAll`.
+
+`--host auto` (the default) uses the first that answers: herdr, cmux, then tmux. Agents that herdr reports as blocked on a question are skipped, so a message never answers an approval prompt for you. Agents that are busy still get the message; Claude Code, Codex and the rest queue typed input until they finish.
 
 Adding a host is one file in `src/hosts/` that provides the `Host` service: list agents with their working directory, deliver text to one, and show a notification.
 
