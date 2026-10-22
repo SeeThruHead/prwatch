@@ -97,16 +97,22 @@ struct Pill: View {
   let color: Color
   var text: String? = nil
   var help: String
+  @State private var hovering = false
 
   var body: some View {
     HStack(spacing: 3) {
       Image(systemName: symbol).font(.system(size: 10, weight: .semibold))
-      if let text { Text(text).font(.system(size: 11, weight: .semibold, design: .rounded)) }
+      if hovering {
+        Text(help).font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+      } else if let text {
+        Text(text).font(.system(size: 11, weight: .semibold, design: .rounded))
+      }
     }
     .foregroundStyle(color)
     .padding(.horizontal, 6).padding(.vertical, 2)
-    .background(Capsule().fill(color.opacity(0.18)))
-    .help(help)
+    .background(Capsule().fill(color.opacity(hovering ? 0.3 : 0.18)))
+    .onHover { hovering = $0 }
+    .animation(.easeOut(duration: 0.12), value: hovering)
   }
 }
 
@@ -124,7 +130,7 @@ struct Pills: View {
       checks
       review
       if let comments = pull.comments, comments > 0 {
-        Pill(symbol: "bubble.left.fill", color: .blue, text: "\(comments)", help: "\(comments) comments from people")
+        Pill(symbol: "bubble.left.fill", color: .blue, text: "\(comments)", help: "\(comments) from people")
       }
     }
   }
@@ -170,7 +176,7 @@ struct PullRow: View {
       Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 9)
       Circle().fill(pull.needsYou ? Color.orange : Color.clear).frame(width: 7, height: 7)
       if pull.reviewing {
-        Image(systemName: "eyeglasses").font(.system(size: 11)).foregroundStyle(.secondary).help("You're reviewing this")
+        Pill(symbol: "eyeglasses", color: .blue, help: "Reviewing")
       }
       Text(pull.title).font(.system(size: 13, weight: pull.needsYou ? .semibold : .regular)).lineLimit(1)
       Spacer(minLength: 6)
@@ -199,9 +205,8 @@ struct PullRow: View {
           Button { watch.acknowledge(pull) } label: { Label("Seen", systemImage: "checkmark.circle") }
         }
         Spacer()
-        if let agent = pull.agent {
-          Label(agent, systemImage: "cpu").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-        }
+        Label(pull.agent ?? "no agent on this branch", systemImage: pull.agent == nil ? "person.crop.circle.badge.questionmark" : "cpu")
+          .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
       }
       .buttonStyle(.bordered).controlSize(.small)
     }
@@ -245,14 +250,15 @@ struct Stat: View {
   let value: Int
   let color: Color
   let help: String
+  @State private var hovering = false
 
   var body: some View {
     HStack(spacing: 3) {
       Image(systemName: symbol).font(.system(size: 11))
-      Text("\(value)").font(.system(size: 12, weight: .semibold, design: .rounded))
+      Text(hovering ? "\(value) \(help.lowercased())" : "\(value)").font(.system(size: 12, weight: .semibold, design: .rounded)).fixedSize()
     }
     .foregroundStyle(value > 0 ? color : Color.secondary)
-    .help(help)
+    .onHover { hovering = $0 }
   }
 }
 
@@ -312,7 +318,7 @@ struct MenuContent: View {
   }
 
   private var maxListHeight: CGFloat {
-    (NSScreen.main?.visibleFrame.height ?? 800) * 0.75
+    (NSScreen.main?.visibleFrame.height ?? 800) * 0.85
   }
 
   private var list: some View {
@@ -322,7 +328,7 @@ struct MenuContent: View {
           PullSection(watch: watch, title: "Needs you", symbol: "circle.fill", color: .orange, pulls: watch.waiting, open: true)
         }
         if !watch.others.isEmpty {
-          PullSection(watch: watch, title: "Handled by agents", symbol: "cpu", color: .gray, pulls: watch.others, open: false)
+          PullSection(watch: watch, title: "Other activity", symbol: "tray", color: .gray, pulls: watch.others, open: true)
         }
       }
       .fixedSize(horizontal: false, vertical: true)
