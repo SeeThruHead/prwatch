@@ -26,6 +26,10 @@ enum PrwatchBar {
     window.appearance = NSAppearance(named: .darkAqua)
     window.contentView = view
     view.layoutSubtreeIfNeeded()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    view.frame = NSRect(origin: .zero, size: view.fittingSize)
+    window.setContentSize(view.frame.size)
+    view.layoutSubtreeIfNeeded()
     guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
     view.cacheDisplay(in: view.bounds, to: bitmap)
     guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
@@ -88,112 +92,242 @@ final class StatusBarController: NSObject, NSApplicationDelegate {
   }
 }
 
-struct PullRow: View {
-  @ObservedObject var watch: Watch
+struct Pill: View {
+  let symbol: String
+  let color: Color
+  var text: String? = nil
+  var help: String
+
+  var body: some View {
+    HStack(spacing: 3) {
+      Image(systemName: symbol).font(.system(size: 10, weight: .semibold))
+      if let text { Text(text).font(.system(size: 11, weight: .semibold, design: .rounded)) }
+    }
+    .foregroundStyle(color)
+    .padding(.horizontal, 6).padding(.vertical, 2)
+    .background(Capsule().fill(color.opacity(0.18)))
+    .help(help)
+  }
+}
+
+struct Pills: View {
   let pull: Pull
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      HStack(spacing: 6) {
-        Circle().fill(pull.needsYou ? Color.orange : Color.gray.opacity(0.5)).frame(width: 7, height: 7)
-        Text(pull.key).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-        Spacer()
-        if let when = relative(pull.lastAt, now: watch.now) {
-          Text(when).font(.system(size: 11)).foregroundStyle(.secondary)
-        }
+    HStack(spacing: 4) {
+      if pull.ready {
+        Pill(symbol: "arrow.triangle.merge", color: .green, help: "Ready to merge")
       }
-      Text(pull.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+      if pull.draft == true {
+        Pill(symbol: "pencil", color: .gray, help: "Draft")
+      }
+      checks
+      review
+      if let comments = pull.comments, comments > 0 {
+        Pill(symbol: "bubble.left.fill", color: .blue, text: "\(comments)", help: "\(comments) comments from people")
+      }
+    }
+  }
+
+  @ViewBuilder private var checks: some View {
+    switch pull.checks {
+    case "passed": Pill(symbol: "checkmark", color: .green, help: "CI passed")
+    case "failed": Pill(symbol: "xmark", color: .red, help: "CI failed")
+    case "pending": Pill(symbol: "clock", color: .orange, help: "CI running")
+    default: EmptyView()
+    }
+  }
+
+  @ViewBuilder private var review: some View {
+    switch pull.decision {
+    case "APPROVED": Pill(symbol: "hand.thumbsup.fill", color: .green, help: "Approved")
+    case "CHANGES_REQUESTED": Pill(symbol: "exclamationmark.bubble.fill", color: .red, help: "Changes requested")
+    case "REVIEW_REQUIRED": Pill(symbol: "eye", color: .gray, help: "Review required")
+    default: EmptyView()
+    }
+  }
+}
+
+struct PullRow: View {
+  @ObservedObject var watch: Watch
+  let pull: Pull
+  @State var expanded: Bool
+  @State private var hovering = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      summary
+      if expanded { details.padding(.leading, 17) }
+    }
+    .padding(.horizontal, 8).padding(.vertical, 6)
+    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hovering || expanded ? 0.07 : 0)))
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 }
+  }
+
+  private var summary: some View {
+    HStack(spacing: 8) {
+      Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 9)
+      Circle().fill(pull.needsYou ? Color.orange : Color.clear).frame(width: 7, height: 7)
+      if pull.reviewing {
+        Image(systemName: "eyeglasses").font(.system(size: 11)).foregroundStyle(.secondary).help("You're reviewing this")
+      }
+      Text(pull.title).font(.system(size: 13, weight: pull.needsYou ? .semibold : .regular)).lineLimit(1)
+      Spacer(minLength: 6)
+      Pills(pull: pull)
+      Text("#\(pull.number)")
+        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).fixedSize()
+      Text(age(pull.lastAt, now: watch.now) ?? "")
+        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
+    }
+    .help(pull.key)
+    .onTapGesture { expanded.toggle() }
+  }
+
+  private var details: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(pull.key).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
       if let last = pull.last {
-        Text(last).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+        Text(last).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
       }
-      HStack(spacing: 10) {
-        Button("Open") { watch.open(pull) }.buttonStyle(.link)
+      HStack(spacing: 6) {
+        Button { watch.open(pull) } label: { Label("Open", systemImage: "safari") }
         if pull.agentId != nil, watch.status?.host == "herdr" {
-          Button("Go to pane") { watch.focus(pull) }.buttonStyle(.link)
+          Button { watch.focus(pull) } label: { Label("Pane", systemImage: "terminal") }
         }
         if pull.needsYou {
-          Button("Seen") { watch.acknowledge(pull) }.buttonStyle(.link)
+          Button { watch.acknowledge(pull) } label: { Label("Seen", systemImage: "checkmark.circle") }
         }
         Spacer()
         if let agent = pull.agent {
-          Text(agent).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+          Label(agent, systemImage: "cpu").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
         }
       }
-      .font(.system(size: 11))
+      .buttonStyle(.bordered).controlSize(.small)
     }
-    .padding(.vertical, 4)
+  }
+}
+
+struct PullSection: View {
+  @ObservedObject var watch: Watch
+  let title: String
+  let symbol: String
+  let color: Color
+  let pulls: [Pull]
+  @State var open: Bool
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      HStack(spacing: 8) {
+        Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 9)
+        Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(color)
+        Text(title).font(.system(size: 12, weight: .bold))
+        Text("\(pulls.count)")
+          .font(.system(size: 11, weight: .semibold, design: .monospaced))
+          .padding(.horizontal, 6).padding(.vertical, 1)
+          .background(Capsule().fill(color.opacity(0.2)))
+        Spacer()
+      }
+      .padding(.horizontal, 8).padding(.vertical, 4)
+      .contentShape(Rectangle())
+      .onTapGesture { open.toggle() }
+      if open {
+        ForEach(pulls) { pull in
+          PullRow(watch: watch, pull: pull, expanded: false).padding(.leading, 10)
+        }
+      }
+    }
+  }
+}
+
+struct Stat: View {
+  let symbol: String
+  let value: Int
+  let color: Color
+  let help: String
+
+  var body: some View {
+    HStack(spacing: 3) {
+      Image(systemName: symbol).font(.system(size: 11))
+      Text("\(value)").font(.system(size: 12, weight: .semibold, design: .rounded))
+    }
+    .foregroundStyle(value > 0 ? color : Color.secondary)
+    .help(help)
   }
 }
 
 struct MenuContent: View {
   @ObservedObject var watch: Watch
+  @State private var listHeight: CGFloat = 0
+
+  private var pulls: [Pull] { watch.status?.pulls ?? [] }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 10) {
       header
       if let error = watch.status?.error {
-        Text(error).font(.system(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+        Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
       }
+      Divider()
       if watch.waiting.isEmpty && watch.others.isEmpty {
-        Text("Nothing new on your pull requests.").font(.system(size: 12)).foregroundStyle(.secondary)
-      }
-      if !watch.waiting.isEmpty {
-        section("Needs you", watch.waiting)
-      }
-      if !watch.others.isEmpty {
-        section("Handled by agents", watch.others)
+        Label("All quiet", systemImage: "checkmark.seal").font(.system(size: 13)).foregroundStyle(.secondary)
+      } else {
+        list
       }
       Divider()
       footer
     }
     .padding(12)
-    .frame(width: 380)
+    .frame(width: 600)
+    .background(Color(nsColor: .windowBackgroundColor))
   }
 
   private var header: some View {
-    HStack {
-      Text("prwatch").font(.system(size: 13, weight: .semibold))
+    HStack(spacing: 14) {
+      Image(systemName: watch.watcherRunning && watch.freshness == .live ? "bell.fill" : "bell.slash")
+      Text("prwatch").font(.system(size: 14, weight: .bold))
       Spacer()
-      Text(headline).font(.system(size: 11)).foregroundStyle(.secondary)
-    }
-  }
-
-  private var headline: String {
-    if !watch.watcherRunning { return "watcher stopped, restarting…" }
-    switch watch.freshness {
-    case .live: return "watching \(watch.status?.pulls.count ?? 0) PRs via \(watch.status?.host ?? "?")"
-    case .stale, .missing: return "checking…"
+      Stat(symbol: "circle.fill", value: watch.waiting.count, color: .orange, help: "Need you")
+      Stat(symbol: "arrow.triangle.merge", value: pulls.filter(\.ready).count, color: .green, help: "Ready to merge")
+      Stat(symbol: "xmark.circle.fill", value: pulls.filter { $0.checks == "failed" }.count, color: .red, help: "CI failing")
+      Stat(symbol: "eyeglasses", value: pulls.filter(\.reviewing).count, color: .blue, help: "Reviewing")
+      Stat(symbol: "tray.full", value: pulls.count, color: .secondary, help: "Watching via \(watch.status?.host ?? "?")")
     }
   }
 
   private var footer: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    HStack(spacing: 12) {
       Toggle("Open at login", isOn: Binding(get: { watch.openAtLogin }, set: { watch.setOpenAtLogin($0) }))
         .toggleStyle(.checkbox).font(.system(size: 11))
-      HStack {
-        if let location = watch.cliLocation {
-          Text("prwatch command at \(location.replacingOccurrences(of: NSHomeDirectory(), with: "~"))").font(.system(size: 11)).foregroundStyle(.secondary)
-        } else {
-          Button("Install command line tool") { watch.installCli() }.buttonStyle(.link).font(.system(size: 11))
-        }
-        Spacer()
-        Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.link).font(.system(size: 11))
+      if !watch.watcherRunning {
+        Label("restarting watcher", systemImage: "arrow.clockwise").font(.system(size: 11)).foregroundStyle(.orange)
       }
+      if watch.cliLocation == nil {
+        Button("Install CLI") { watch.installCli() }.buttonStyle(.link).font(.system(size: 11))
+      }
+      Spacer()
+      Button("Quit") { NSApp.terminate(nil) }
     }
   }
 
-  private func section(_ title: String, _ pulls: [Pull]) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-      ScrollView {
-        VStack(alignment: .leading, spacing: 0) {
-          ForEach(pulls) { pull in
-            PullRow(watch: watch, pull: pull)
-            Divider()
-          }
+  private var maxListHeight: CGFloat {
+    (NSScreen.main?.visibleFrame.height ?? 800) * 0.75
+  }
+
+  private var list: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 8) {
+        if !watch.waiting.isEmpty {
+          PullSection(watch: watch, title: "Needs you", symbol: "circle.fill", color: .orange, pulls: watch.waiting, open: true)
+        }
+        if !watch.others.isEmpty {
+          PullSection(watch: watch, title: "Handled by agents", symbol: "cpu", color: .gray, pulls: watch.others, open: false)
         }
       }
-      .frame(maxHeight: 320)
+      .fixedSize(horizontal: false, vertical: true)
+      .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { listHeight = $0 }
     }
+    .frame(height: min(listHeight, maxListHeight))
   }
 }

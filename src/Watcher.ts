@@ -74,6 +74,15 @@ const latest = (delivery: Delivery | undefined, before: Status["pulls"][number] 
   return { last: before.last, lastAt: before.lastAt ?? at }
 }
 
+export const statsOf = (pull: PullRequest) => ({
+  role: pull.role,
+  draft: pull.draft,
+  checks: pull.checks,
+  decision: pull.decision,
+  mergeable: pull.mergeable,
+  comments: pull.items.filter((item) => !item.bot).length
+})
+
 const nextStatus = (
   previous: Status | undefined,
   pulls: readonly PullRequest[],
@@ -96,7 +105,8 @@ const nextStatus = (
       needsYou: delivery?.needsYou === true || before?.needsYou === true,
       ...latest(delivery, before, at),
       ...(agent === undefined ? {} : { agent }),
-      ...(agentId === undefined ? {} : { agentId })
+      ...(agentId === undefined ? {} : { agentId }),
+      ...statsOf(pull)
     }
   })
 })

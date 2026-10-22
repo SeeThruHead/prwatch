@@ -15,7 +15,13 @@ export const Status = Schema.Struct({
       last: Schema.optionalKey(Schema.String),
       lastAt: Schema.optionalKey(Schema.String),
       agent: Schema.optionalKey(Schema.String),
-      agentId: Schema.optionalKey(Schema.String)
+      agentId: Schema.optionalKey(Schema.String),
+      role: Schema.optionalKey(Schema.String),
+      draft: Schema.optionalKey(Schema.Boolean),
+      checks: Schema.optionalKey(Schema.String),
+      decision: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      mergeable: Schema.optionalKey(Schema.String),
+      comments: Schema.optionalKey(Schema.Number)
     })
   )
 })

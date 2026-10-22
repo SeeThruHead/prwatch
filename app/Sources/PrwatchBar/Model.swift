@@ -9,6 +9,18 @@ struct Pull: Decodable, Hashable, Identifiable {
   let lastAt: String?
   let agent: String?
   let agentId: String?
+  let role: String?
+  let draft: Bool?
+  let checks: String?
+  let decision: String?
+  let mergeable: String?
+  let comments: Int?
+
+  var repo: String { String(key.split(separator: "#").first ?? "") }
+  var number: String { String(key.split(separator: "#").last ?? "") }
+  var repoName: String { String(repo.split(separator: "/").last ?? "") }
+  var reviewing: Bool { role == "reviewer" }
+  var ready: Bool { draft != true && checks == "passed" && decision == "APPROVED" && mergeable == "yes" }
 
   var id: String { key }
 }
@@ -38,11 +50,11 @@ func parseDate(_ iso: String) -> Date? {
   return formatter.date(from: iso)
 }
 
-func relative(_ iso: String?, now: Date) -> String? {
+func age(_ iso: String?, now: Date) -> String? {
   guard let iso, let date = parseDate(iso) else { return nil }
-  let seconds = Int(now.timeIntervalSince(date))
-  if seconds < 60 { return "just now" }
-  if seconds < 3600 { return "\(seconds / 60)m ago" }
-  if seconds < 86400 { return "\(seconds / 3600)h ago" }
-  return "\(seconds / 86400)d ago"
+  let seconds = max(0, Int(now.timeIntervalSince(date)))
+  if seconds < 60 { return "now" }
+  if seconds < 3600 { return "\(seconds / 60)m" }
+  if seconds < 86400 { return "\(seconds / 3600)h" }
+  return "\(seconds / 86400)d"
 }
