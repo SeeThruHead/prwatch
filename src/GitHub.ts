@@ -61,7 +61,7 @@ const PullNode = Schema.Struct({
   isDraft: Schema.Boolean,
   mergeable: Schema.String,
   reviewDecision: Schema.NullOr(Schema.String),
-  repository: Schema.Struct({ nameWithOwner: Schema.String }),
+  repository: Schema.Struct({ nameWithOwner: Schema.String, isPrivate: Schema.Boolean }),
   reviews: Nodes(
     Schema.Struct({
       id: Schema.String,
@@ -104,7 +104,7 @@ const Response = Schema.Struct({
 
 const FIELDS = `
   number title url headRefName isDraft mergeable reviewDecision
-  repository { nameWithOwner }
+  repository { nameWithOwner isPrivate }
   reviews(last: 30) { nodes { id state submittedAt body url author { login __typename } } }
   comments(last: 30) { nodes { id createdAt body url author { login __typename } } }
   reviewThreads(last: 50) {
@@ -147,6 +147,8 @@ const authorOf = (author: typeof Author.Type) => ({
 })
 
 type Pull = typeof PullNode.Type
+
+const isPrivate = (pull: Pull) => pull.repository.isPrivate
 
 const mentions = (body: string, viewer: string) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
 
@@ -247,9 +249,10 @@ export class GitHub extends Context.Service<
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Response))),
         Effect.map(({ data }) => {
           const viewer = data.viewer.login
-          const authored = data.viewer.pullRequests.nodes.map(toPullRequest(viewer, "author"))
+          const authored = data.viewer.pullRequests.nodes.filter(isPrivate).map(toPullRequest(viewer, "author"))
           const others = [...data.commented.nodes, ...data.reviewed.nodes]
             .flatMap((node) => Option.toArray(Schema.decodeUnknownOption(PullNode)(node)))
+            .filter(isPrivate)
             .map(toPullRequest(viewer, "reviewer"))
           const unique = others.filter((pull, index) => others.findIndex((other) => other.key === pull.key) === index)
 
