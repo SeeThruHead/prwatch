@@ -15,6 +15,7 @@ final class Watch: ObservableObject {
   private var watcher: Process?
   private var stopping = false
   private let home: URL
+  private let broadcaster = StateBroadcast("dev.seethruhead.prwatch")
 
   static let restartDelay: TimeInterval = 10
 
@@ -61,9 +62,28 @@ final class Watch: ObservableObject {
     let file = home.appendingPathComponent("status.json")
     guard let data = try? Data(contentsOf: file) else {
       status = nil
+      broadcast()
       return
     }
     status = try? JSONDecoder().decode(Status.self, from: data)
+    broadcast()
+  }
+
+  private var stateName: String {
+    guard let status else { return "off" }
+    if status.error != nil { return "error" }
+    if freshness == .stale { return "stale" }
+    return waiting.isEmpty ? "ok" : "needs-you"
+  }
+
+  private func broadcast() {
+    let pulls = status?.pulls ?? []
+    broadcaster.publish([
+      "state": stateName,
+      "open": String(pulls.count),
+      "needsYou": String(waiting.count),
+      "failing": String(pulls.filter { $0.checks == "failed" }.count),
+    ])
   }
 
   func startWatcher() {
