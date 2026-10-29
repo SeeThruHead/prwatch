@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Config, Console, Duration, Effect, Layer, Schema } from "effect"
+import { Config, Console, Duration, Effect, Layer, Schedule, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
@@ -73,6 +73,22 @@ const hostLayer = (host: HostChoice) => {
 const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, hostLayer(host))), Layer.provide(Shell.layer))
 
+const isAlive = (pid: typeof process.ppid) => {
+  try {
+    return process.kill(pid, 0)
+  } catch {
+    return false
+  }
+}
+
+const parentExited = Effect.gen(function* () {
+  const parent = process.ppid
+  if (parent === 1) return yield* Effect.never
+
+  yield* Effect.sync(() => isAlive(parent)).pipe(Effect.repeat({ schedule: Schedule.spaced("5 seconds"), until: (alive) => !alive }))
+  yield* Console.log("prwatch: the process that started this one exited, stopping")
+})
+
 const run = Command.make(
   "run",
   { host: hostFlag, dryRun, instructions, reviewInstructions, interval, probe },
@@ -80,13 +96,14 @@ const run = Command.make(
     Effect.gen(function* () {
       const watcher = yield* Watcher
       yield* Console.log(`prwatch: checking which pull requests changed every ${probe}s, and all of them every ${interval}s`)
-      return yield* watcher.watch({
+      const watching = watcher.watch({
         dryRun,
         instructions,
         reviewInstructions,
         interval: Duration.seconds(interval),
         probe: Duration.seconds(probe)
       })
+      return yield* Effect.raceFirst(watching, parentExited)
     }).pipe(Effect.provide(watcherLayer(host)))
 ).pipe(Command.withDescription("watch your pull requests and hand each change to the agent on that branch"))
 

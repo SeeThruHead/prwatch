@@ -27,7 +27,15 @@ final class Watch: ObservableObject {
     timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.reload() }
     }
+    NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.stopWatcher() }
+    }
+    signal(SIGTERM, SIG_IGN)
+    termination.setEventHandler { NSApp.terminate(nil) }
+    termination.resume()
   }
+
+  private let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 
   var freshness: Freshness { Freshness.of(status, now: now) }
 
