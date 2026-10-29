@@ -16,6 +16,7 @@ export const pull = (overrides: Partial<PullRequest> = {}): PullRequest => {
   const repo = repoSlug("acme/app")
 
   return {
+    id: "PR_1",
     key: prKey(repo, 1),
     repo,
     number: 1,

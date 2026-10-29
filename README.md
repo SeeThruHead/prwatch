@@ -49,7 +49,7 @@ Adding a host is one file in `src/hosts/` that provides the `Host` service: list
 ```sh
 prwatch once              # first run records what exists; later runs deliver what changed
 prwatch once --dry-run    # print what would be sent
-prwatch run               # check every 60 seconds (--interval to change it)
+prwatch run               # see which pull requests changed every 10 seconds (--probe), fetch everything every 2 minutes (--interval)
 prwatch status            # the pull requests being watched; ● marks the ones that need you
 prwatch ack acme/app#42   # clear the ● once you have looked
 ```

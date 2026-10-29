@@ -24,6 +24,7 @@ export const Checks = Schema.Literals(["pending", "passed", "failed", "none"])
 export type Checks = typeof Checks.Type
 
 export const PullRequest = Schema.Struct({
+  id: Schema.String,
   key: PrKey,
   repo: RepoSlug,
   number: Schema.Number,
@@ -41,6 +42,10 @@ export const PullRequest = Schema.Struct({
 })
 export type PullRequest = typeof PullRequest.Type
 
+type Role = PullRequest["role"]
+
+export type Stamp = { readonly id: string; readonly role: Role; readonly stamp: string }
+
 const Author = Schema.NullOr(Schema.Struct({ login: Schema.String, __typename: Schema.String }))
 
 const Nodes = <S extends Schema.Top>(item: S) => Schema.Struct({ nodes: Schema.Array(item) })
@@ -54,6 +59,7 @@ const CommentNode = Schema.Struct({
 })
 
 const PullNode = Schema.Struct({
+  id: Schema.String,
   number: Schema.Number,
   title: Schema.String,
   url: Schema.String,
@@ -91,19 +97,38 @@ const PullNode = Schema.Struct({
   history: Nodes(Schema.Struct({ commit: Schema.Struct({ oid: Schema.String }) }))
 })
 
-const Response = Schema.Struct({
+const StampNode = Schema.Struct({
+  id: Schema.String,
+  updatedAt: Schema.String,
+  headRefOid: Schema.String,
+  isDraft: Schema.Boolean,
+  mergeable: Schema.String,
+  reviewDecision: Schema.NullOr(Schema.String),
+  repository: Schema.Struct({ isPrivate: Schema.Boolean }),
+  latest: Nodes(Schema.Struct({ commit: Schema.Struct({ statusCheckRollup: Schema.NullOr(Schema.Struct({ state: Schema.String })) }) }))
+})
+
+const ResponseOf = <S extends Schema.Top>(node: S) =>
+  Schema.Struct({
+    data: Schema.Struct({
+      viewer: Schema.Struct({
+        login: Schema.String,
+        pullRequests: Nodes(node)
+      }),
+      commented: Nodes(Schema.Unknown),
+      reviewed: Nodes(Schema.Unknown)
+    })
+  })
+
+const ByIdResponse = Schema.Struct({
   data: Schema.Struct({
-    viewer: Schema.Struct({
-      login: Schema.String,
-      pullRequests: Nodes(PullNode)
-    }),
-    commented: Nodes(Schema.Unknown),
-    reviewed: Nodes(Schema.Unknown)
+    viewer: Schema.Struct({ login: Schema.String }),
+    nodes: Schema.Array(Schema.Unknown)
   })
 })
 
 const FIELDS = `
-  number title url headRefName isDraft mergeable reviewDecision
+  id number title url headRefName isDraft mergeable reviewDecision
   repository { nameWithOwner isPrivate }
   reviews(last: 30) { nodes { id state submittedAt body url author { login __typename } } }
   comments(last: 30) { nodes { id createdAt body url author { login __typename } } }
@@ -114,17 +139,27 @@ const FIELDS = `
   history: commits(last: 100) { nodes { commit { oid } } }
 `
 
-const reviewing = (alias: string, qualifier: string) =>
-  `${alias}: search(query: "is:pr is:open -author:@me ${qualifier}", type: ISSUE, first: 30) { nodes { ... on PullRequest { ${FIELDS} } } }`
+const STAMP_FIELDS = `
+  id updatedAt headRefOid isDraft mergeable reviewDecision
+  repository { isPrivate }
+  latest: commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+`
 
-const QUERY = `query {
+const reviewing = (alias: string, qualifier: string, fields: string) =>
+  `${alias}: search(query: "is:pr is:open -author:@me ${qualifier}", type: ISSUE, first: 30) { nodes { ... on PullRequest { ${fields} } } }`
+
+const queryOf = (fields: string) => `query {
   viewer {
     login
-    pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${FIELDS} } }
+    pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${fields} } }
   }
-  ${reviewing("commented", "commenter:@me")}
-  ${reviewing("reviewed", "reviewed-by:@me")}
+  ${reviewing("commented", "commenter:@me", fields)}
+  ${reviewing("reviewed", "reviewed-by:@me", fields)}
 }`
+
+const QUERY = queryOf(FIELDS)
+const PROBE = queryOf(STAMP_FIELDS)
+const BY_ID = `query($ids: [ID!]!) { viewer { login } nodes(ids: $ids) { ... on PullRequest { ${FIELDS} } } }`
 
 const checksOf = (state: string | undefined): Checks => {
   if (state === undefined) return "none"
@@ -148,7 +183,34 @@ const authorOf = (author: typeof Author.Type) => ({
 
 type Pull = typeof PullNode.Type
 
-const isPrivate = (pull: Pull) => pull.repository.isPrivate
+const isPrivate = (pull: { readonly repository: { readonly isPrivate: boolean } }) => pull.repository.isPrivate
+
+const withRoles = <A extends { readonly id: string; readonly repository: { readonly isPrivate: boolean } }>(
+  authored: readonly A[],
+  others: readonly unknown[],
+  decode: (node: unknown) => Option.Option<A>
+): readonly { readonly node: A; readonly role: Role }[] => {
+  const reviewing = others.flatMap((node) => Option.toArray(decode(node)))
+  const unique = reviewing.filter((node, index) => reviewing.findIndex((other) => other.id === node.id) === index)
+
+  return [
+    ...authored.map((node) => ({ node, role: "author" as const })),
+    ...unique.map((node) => ({ node, role: "reviewer" as const }))
+  ].filter(({ node }) => isPrivate(node))
+}
+
+const stampOf = ({ node, role }: { readonly node: typeof StampNode.Type; readonly role: Role }): Stamp => ({
+  id: node.id,
+  role,
+  stamp: [
+    node.updatedAt,
+    node.headRefOid,
+    node.isDraft,
+    node.mergeable,
+    node.reviewDecision,
+    node.latest.nodes[0]?.commit.statusCheckRollup?.state
+  ].join(" ")
+})
 
 const mentions = (body: string, viewer: string) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
 
@@ -195,7 +257,7 @@ const itemsOf = (pull: Pull, viewer: string): readonly Item[] => [
   })
 ]
 
-const relevant = (role: "author" | "reviewer", viewer: string) => (item: Item) => {
+const relevant = (role: Role, viewer: string) => (item: Item) => {
   if (item.author === viewer) return false
   if (role === "author") return true
 
@@ -203,12 +265,13 @@ const relevant = (role: "author" | "reviewer", viewer: string) => (item: Item) =
 }
 
 const toPullRequest =
-  (viewer: string, role: "author" | "reviewer") =>
+  (viewer: string, role: Role) =>
   (pull: Pull): PullRequest => {
     const repo = Schema.decodeSync(RepoSlug)(pull.repository.nameWithOwner)
     const commit = pull.latest.nodes[0]?.commit
 
     return {
+      id: pull.id,
       key: prKey(repo, pull.number),
       repo,
       number: pull.number,
@@ -236,7 +299,11 @@ export class GitHubUnavailable extends Schema.TaggedError<GitHubUnavailable>()("
 
 export class GitHub extends Context.Service<
   GitHub,
-  { readonly pullRequests: Effect.Effect<{ readonly viewer: string; readonly pulls: readonly PullRequest[] }, GitHubUnavailable> }
+  {
+    readonly pullRequests: Effect.Effect<{ readonly viewer: string; readonly pulls: readonly PullRequest[] }, GitHubUnavailable>
+    readonly stamps: Effect.Effect<readonly Stamp[], GitHubUnavailable>
+    readonly pullsById: (stamps: readonly Stamp[]) => Effect.Effect<readonly PullRequest[], GitHubUnavailable>
+  }
 >()("prwatch/GitHub") {
   static readonly layer = Layer.effect(
     GitHub,
@@ -245,24 +312,55 @@ export class GitHub extends Context.Service<
 
       const unavailable = (error: CommandFailed | Schema.SchemaError) => new GitHubUnavailable({ reason: error.message })
 
-      const pullRequests = shell.run("gh", ["api", "graphql", "-f", `query=${QUERY}`]).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Response))),
+      const graphql = (query: string, variables: readonly string[] = []) =>
+        shell.run("gh", ["api", "graphql", "-f", `query=${query}`, ...variables.flatMap((variable) => ["-f", variable])])
+
+      const pullRequests = graphql(QUERY).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(PullNode)))),
         Effect.map(({ data }) => {
           const viewer = data.viewer.login
-          const authored = data.viewer.pullRequests.nodes.filter(isPrivate).map(toPullRequest(viewer, "author"))
-          const others = [...data.commented.nodes, ...data.reviewed.nodes]
-            .flatMap((node) => Option.toArray(Schema.decodeUnknownOption(PullNode)(node)))
-            .filter(isPrivate)
-            .map(toPullRequest(viewer, "reviewer"))
-          const unique = others.filter((pull, index) => others.findIndex((other) => other.key === pull.key) === index)
+          const pulls = withRoles(
+            data.viewer.pullRequests.nodes,
+            [...data.commented.nodes, ...data.reviewed.nodes],
+            Schema.decodeUnknownOption(PullNode)
+          ).map(({ node, role }) => toPullRequest(viewer, role)(node))
 
-          return { viewer, pulls: [...authored, ...unique] }
+          return { viewer, pulls }
         }),
         Effect.mapError(unavailable),
         Effect.withSpan("GitHub.pullRequests")
       )
 
-      return GitHub.of({ pullRequests })
+      const stamps = graphql(PROBE).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(StampNode)))),
+        Effect.map(({ data }) =>
+          withRoles(
+            data.viewer.pullRequests.nodes,
+            [...data.commented.nodes, ...data.reviewed.nodes],
+            Schema.decodeUnknownOption(StampNode)
+          ).map(stampOf)
+        ),
+        Effect.mapError(unavailable),
+        Effect.withSpan("GitHub.stamps")
+      )
+
+      const pullsById = Effect.fn("GitHub.pullsById")(function* (wanted: readonly Stamp[]) {
+        if (wanted.length === 0) return []
+
+        const { data } = yield* graphql(
+          BY_ID,
+          wanted.map((stamp) => `ids[]=${stamp.id}`)
+        ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ByIdResponse))), Effect.mapError(unavailable))
+
+        return data.nodes
+          .flatMap((node) => Option.toArray(Schema.decodeUnknownOption(PullNode)(node)))
+          .filter(isPrivate)
+          .flatMap((pull) =>
+            wanted.filter((stamp) => stamp.id === pull.id).map((stamp) => toPullRequest(data.viewer.login, stamp.role)(pull))
+          )
+      })
+
+      return GitHub.of({ pullRequests, stamps, pullsById })
     })
   )
 }

@@ -5,6 +5,7 @@ import { GitHub } from "../src/GitHub.ts"
 import { Shell } from "../src/Shell.ts"
 
 const node = (nameWithOwner: string, isPrivate: boolean, number: number) => ({
+  id: `PR_${number}`,
   number,
   title: "A change",
   url: `https://github.com/${nameWithOwner}/pull/${number}`,
@@ -51,5 +52,70 @@ const keys = GitHub.use((github) => github.pullRequests).pipe(
 describe("GitHub.pullRequests", () => {
   it("watches pull requests in private repositories only, authored or reviewed, and drops any whose visibility is unknown", async () => {
     expect(await Effect.runPromise(keys)).toEqual(["acme/private#1", "other/private#3"])
+  })
+})
+
+const stampNode = (id: string, isPrivate: boolean, state: string | null) => ({
+  id,
+  updatedAt: "2026-01-01T00:00:00Z",
+  headRefOid: "abc1234",
+  isDraft: false,
+  mergeable: "MERGEABLE",
+  reviewDecision: null,
+  repository: { isPrivate },
+  latest: { nodes: [{ commit: { statusCheckRollup: state === null ? null : { state } } }] }
+})
+
+const probe = (state: string) => ({
+  data: {
+    viewer: { login: "me", pullRequests: { nodes: [stampNode("PR_1", true, state), stampNode("PR_2", false, state)] } },
+    commented: { nodes: [stampNode("PR_3", true, null)] },
+    reviewed: { nodes: [stampNode("PR_3", true, null)] }
+  }
+})
+
+const github = (reply: (args: readonly string[]) => unknown) =>
+  GitHub.layer.pipe(Layer.provide(Layer.succeed(Shell, Shell.of({ run: (_, args) => Effect.sync(() => JSON.stringify(reply(args))) }))))
+
+describe("GitHub.stamps", () => {
+  const stampsFor = (state: string) =>
+    Effect.runPromise(GitHub.use((service) => service.stamps).pipe(Effect.provide(github(() => probe(state)))))
+
+  it("lists private pull requests once each, with the role they are watched in", async () => {
+    expect((await stampsFor("PENDING")).map(({ id, role }) => ({ id, role }))).toEqual([
+      { id: "PR_1", role: "author" },
+      { id: "PR_3", role: "reviewer" }
+    ])
+  })
+
+  it("changes the stamp when CI settles, which does not touch the pull request's updatedAt", async () => {
+    const [pending] = await stampsFor("PENDING")
+    const [passed] = await stampsFor("SUCCESS")
+
+    expect(pending?.stamp).not.toEqual(passed?.stamp)
+  })
+})
+
+describe("GitHub.pullsById", () => {
+  it("fetches only the pull requests asked for, in the role they were stamped with", async () => {
+    const calls: (readonly string[])[] = []
+    const layer = github((args) => {
+      calls.push(args)
+      return { data: { viewer: { login: "me" }, nodes: [node("acme/private", true, 3), null] } }
+    })
+    const pulls = await Effect.runPromise(
+      GitHub.use((service) => service.pullsById([{ id: "PR_3", role: "reviewer", stamp: "x" }])).pipe(Effect.provide(layer))
+    )
+
+    expect(pulls.map((pull) => [pull.key, pull.role])).toEqual([["acme/private#3", "reviewer"]])
+    expect(calls[0]?.filter((arg) => arg.startsWith("ids[]="))).toEqual(["ids[]=PR_3"])
+  })
+
+  it("does not call GitHub when nothing changed", async () => {
+    const layer = github(() => {
+      throw new Error("called")
+    })
+
+    expect(await Effect.runPromise(GitHub.use((service) => service.pullsById([])).pipe(Effect.provide(layer)))).toEqual([])
   })
 })
