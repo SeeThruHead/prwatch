@@ -38,9 +38,19 @@ enum PrwatchBar {
 }
 
 @MainActor
-final class StatusBarController: NSObject, NSApplicationDelegate {
+final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
   private let watch = Watch()
   private let popover = NSPopover()
+  private lazy var anchor: NSWindow = {
+    let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isOpaque = false
+    window.backgroundColor = .clear
+    window.hasShadow = false
+    window.ignoresMouseEvents = true
+    window.level = .statusBar
+    window.collectionBehavior = [.canJoinAllSpaces, .stationary]
+    return window
+  }()
   private var item: NSStatusItem?
   private var subscription: AnyCancellable?
 
@@ -56,6 +66,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate {
     popover.contentViewController = host
     popover.behavior = .transient
     popover.animates = false
+    popover.delegate = self
 
     subscription = watch.objectWillChange.sink { [weak self] _ in
       DispatchQueue.main.async { self?.refreshButton() }
@@ -86,9 +97,17 @@ final class StatusBarController: NSObject, NSApplicationDelegate {
       popover.performClose(nil)
       return
     }
+    guard let buttonWindow = button.window else { return }
     watch.reload()
-    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    anchor.setFrame(buttonWindow.convertToScreen(button.convert(button.bounds, to: nil)), display: false)
+    anchor.orderFrontRegardless()
+    guard let anchorView = anchor.contentView else { return }
+    popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    anchor.orderOut(nil)
   }
 }
 
