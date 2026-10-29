@@ -7,6 +7,7 @@ import pkg from "../package.json" with { type: "json" }
 import { GitHub } from "../src/GitHub.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
 import { HerdrHost } from "../src/hosts/Herdr.ts"
+import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
 import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
@@ -15,8 +16,8 @@ import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
 import { Workspace } from "../src/Workspace.ts"
 
-const hostFlag = Flag.Literals("host", ["auto", "herdr", "cmux", "tmux"]).pipe(
-  Flag.withDescription("where your agents run; auto picks the first that answers: herdr, cmux, then tmux"),
+const hostFlag = Flag.Literals("host", ["auto", "herdr", "cmux", "orca", "tmux"]).pipe(
+  Flag.withDescription("where your agents run; auto picks the first that answers: herdr, cmux, orca, then tmux"),
   Flag.withDefault("auto")
 )
 const dryRun = Flag.Boolean("dry-run").pipe(Flag.withDescription("print what would be sent instead of sending it"), Flag.withDefault(false))
@@ -34,7 +35,7 @@ const interval = Flag.Int("interval").pipe(
   Flag.withDefault(60)
 )
 
-type HostName = "auto" | "herdr" | "cmux" | "tmux"
+type HostName = "auto" | "herdr" | "cmux" | "orca" | "tmux"
 
 const answers = (command: string, args: readonly string[]) =>
   Effect.flatMap(Shell, (shell) =>
@@ -47,6 +48,7 @@ const answers = (command: string, args: readonly string[]) =>
 const detectHost = Effect.gen(function* () {
   if (yield* answers("herdr", ["agent", "list"])) return HerdrHost
   if (yield* answers("cmux", ["ping"])) return CmuxHost
+  if (yield* answers("orca", ["terminal", "list", "--json"])) return OrcaHost
 
   return TmuxHost
 })
@@ -54,6 +56,7 @@ const detectHost = Effect.gen(function* () {
 const hostLayer = (host: HostName) => {
   if (host === "herdr") return HerdrHost
   if (host === "cmux") return CmuxHost
+  if (host === "orca") return OrcaHost
   if (host === "tmux") return TmuxHost
 
   return Layer.unwrap(detectHost)
@@ -123,20 +126,23 @@ const keyOf = (input: string) => {
 const callerPane = Effect.gen(function* () {
   const herdr = yield* Config.String("HERDR_PANE_ID").pipe(Config.withDefault(""))
   const cmux = yield* Config.String("CMUX_WORKSPACE_ID").pipe(Config.withDefault(""))
+  const orca = yield* Config.String("ORCA_TERMINAL_HANDLE").pipe(Config.withDefault(""))
   const tmux = yield* Config.String("TMUX_PANE").pipe(Config.withDefault(""))
 
-  return herdr || cmux || tmux
+  return herdr || cmux || orca || tmux
 })
 
 const agentFlag = Flag.String("agent").pipe(
-  Flag.withDescription("the pane id to send to; defaults to the pane this runs in ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID or $TMUX_PANE)"),
+  Flag.withDescription(
+    "the pane id to send to; defaults to the pane this runs in ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID, $ORCA_TERMINAL_HANDLE or $TMUX_PANE)"
+  ),
   Flag.withDefault("")
 )
 
 const claim = Command.make("claim", { pulls: pullKeys, agent: agentFlag }, ({ pulls, agent }) =>
   Effect.gen(function* () {
     const pane = agent || (yield* callerPane)
-    if (pane === "") return yield* Console.error("prwatch claim: not inside a herdr or tmux pane; pass --agent <pane id>")
+    if (pane === "") return yield* Console.error("prwatch claim: not inside a herdr, cmux, orca or tmux pane; pass --agent <pane id>")
 
     const keys = pulls.map(keyOf)
     yield* Bookkeeping.claim(keys, pane)
