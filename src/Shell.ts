@@ -1,6 +1,8 @@
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 
+import { Stdout } from "./Brands.ts"
+
 export class CommandFailed extends Schema.TaggedError<CommandFailed>()("CommandFailed", {
   command: Schema.String,
   exitCode: Schema.Number,
@@ -23,7 +25,7 @@ export class Shell extends Context.Service<
       command: string,
       args: readonly string[],
       options?: { readonly cwd?: string; readonly stdin?: string }
-    ) => Effect.Effect<string, CommandFailed>
+    ) => Effect.Effect<Stdout, CommandFailed>
   }
 >()("prwatch/Shell") {
   static readonly layer = Layer.effect(
@@ -53,7 +55,7 @@ export class Shell extends Context.Service<
               { concurrency: 3 }
             )
 
-            return exitCode === 0 ? stdout : yield* failed(exitCode, stderr)
+            return exitCode === 0 ? Stdout.make(stdout) : yield* failed(exitCode, stderr)
           })
         ).pipe(
           Effect.timeoutOrElse({ duration: COMMAND_TIMEOUT, orElse: () => Effect.fail(failed(-1, "timed out")) }),

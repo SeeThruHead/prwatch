@@ -1,13 +1,13 @@
 import { Schema } from "effect"
 
-import { type Checks, type Item, type PullRequest } from "./GitHub.ts"
-import { PrKey } from "./Ids.ts"
+import { NodeId, PrKey, ReviewDecision, Sha } from "./Brands.ts"
+import { Checks, type Item, type PullRequest } from "./GitHub.ts"
 
 export const SeenPull = Schema.Struct({
-  items: Schema.Array(Schema.String),
-  head: Schema.String,
-  checks: Schema.String,
-  decision: Schema.NullOr(Schema.String),
+  items: Schema.Array(NodeId),
+  head: Sha,
+  checks: Checks,
+  decision: Schema.NullOr(ReviewDecision),
   ready: Schema.Boolean
 })
 export type SeenPull = typeof SeenPull.Type
@@ -17,10 +17,10 @@ export type Seen = typeof Seen.Type
 
 export type Change =
   | { readonly kind: "item"; readonly item: Item }
-  | { readonly kind: "checks"; readonly checks: Extract<Checks, "passed" | "failed">; readonly head: string }
-  | { readonly kind: "decision"; readonly decision: string }
+  | { readonly kind: "checks"; readonly checks: Extract<Checks, "passed" | "failed">; readonly head: Sha }
+  | { readonly kind: "decision"; readonly decision: ReviewDecision }
   | { readonly kind: "ready" }
-  | { readonly kind: "pushed"; readonly head: string }
+  | { readonly kind: "pushed"; readonly head: Sha }
 
 const isSettled = (checks: Checks): checks is "passed" | "failed" => checks === "passed" || checks === "failed"
 

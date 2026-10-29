@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { Sha } from "../src/Brands.ts"
 import { changesSince, needsYou, snapshotOf } from "../src/Changes.ts"
 import { item, pull } from "./fixtures.ts"
 
@@ -39,6 +40,6 @@ describe("needsYou", () => {
     expect(needsYou({ kind: "item", item: item({ id: "a" }) })).toBe(true)
     expect(needsYou({ kind: "item", item: item({ id: "b", bot: true, author: "coderabbitai" }) })).toBe(false)
     expect(needsYou({ kind: "decision", decision: "APPROVED" })).toBe(true)
-    expect(needsYou({ kind: "checks", checks: "failed", head: "x" })).toBe(false)
+    expect(needsYou({ kind: "checks", checks: "failed", head: Sha.make("x") })).toBe(false)
   })
 })

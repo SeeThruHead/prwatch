@@ -16,13 +16,35 @@
       "rules": {
         "no-restricted-imports": [
           "error",
-          { "paths": [{ "name": "effect/process", "message": "Start processes through the Shell service (src/Shell.ts) only." }] }
+          {
+            "paths": [
+              {
+                "name": "effect/process",
+                "message": "Start processes through the Shell service (src/Shell.ts) only."
+              }
+            ]
+          }
         ]
       }
     },
     {
+      "files": ["src/**", "bin/**"],
+      "rules": {
+        "prwatch/branded": "error"
+      }
+    },
+    {
       "files": ["src/Shell.ts"],
-      "rules": { "no-restricted-imports": "off" }
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["src/Shell.ts"],
+      "rules": {
+        "prwatch/branded": "off"
+      }
     }
-  ]
+  ],
+  "jsPlugins": ["./tools/oxlint-plugin.ts"]
 }

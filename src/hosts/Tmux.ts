@@ -1,26 +1,21 @@
 import { Config, Effect, Layer } from "effect"
 
 import { DeliveryFailed, Host, HostUnavailable } from "../Host.ts"
-import { agentId } from "../Ids.ts"
-import { Shell } from "../Shell.ts"
+import { type AgentId, FilePath, Text, agentId } from "../Brands.ts"
+import { type CommandFailed, Shell } from "../Shell.ts"
 
-const NAME = "tmux"
+const NAME = "tmux" as const
 
 const AGENT_COMMANDS = ["claude", "codex", "opencode", "gemini", "pi", "amp", "aider", "cursor-agent"]
 
 const FORMAT = "#{pane_id}\t#{pane_current_path}\t#{pane_current_command}\t#{session_name}:#{window_index}"
-
-const parsePane = (line: string) => {
-  const [id = "", cwd = "", command = "", where = ""] = line.split("\t")
-  return { id, cwd, command, where }
-}
 
 export const TmuxHost = Layer.effect(
   Host,
   Effect.gen(function* () {
     const shell = yield* Shell
     const extra = yield* Config.String("PRWATCH_AGENT_COMMANDS").pipe(Config.withDefault(""))
-    const commands: ReadonlySet<string> = new Set([
+    const commands = new Set([
       ...AGENT_COMMANDS,
       ...extra
         .split(",")
@@ -33,21 +28,24 @@ export const TmuxHost = Layer.effect(
         out
           .split("\n")
           .filter((line) => line.trim() !== "")
-          .map(parsePane)
+          .map((line) => {
+            const [id = "", cwd = "", command = "", where = ""] = line.split("\t")
+            return { id, cwd, command, where }
+          })
           .filter((pane) => commands.has(pane.command))
           .map((pane) => ({
             id: agentId(pane.id),
-            cwd: pane.cwd,
-            label: `${pane.command} in ${pane.where}`,
+            cwd: FilePath.make(pane.cwd),
+            label: Text.make(`${pane.command} in ${pane.where}`),
             status: "unknown" as const
           }))
       ),
-      Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: error.message })),
+      Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) })),
       Effect.withSpan("TmuxHost.agents")
     )
 
-    const deliver = Effect.fn("TmuxHost.deliver")(function* (agent: string, text: string) {
-      const failed = (error: { readonly message: string }) => new DeliveryFailed({ host: NAME, agent, reason: error.message })
+    const deliver = Effect.fn("TmuxHost.deliver")(function* (agent: AgentId, text: Text) {
+      const failed = (error: CommandFailed) => new DeliveryFailed({ host: NAME, agent, reason: Text.make(error.message) })
       const buffer = `prwatch-${agent.replace(/\W/g, "")}`
 
       yield* shell.run("tmux", ["load-buffer", "-b", buffer, "-"], { stdin: text }).pipe(Effect.mapError(failed))
@@ -55,7 +53,7 @@ export const TmuxHost = Layer.effect(
       yield* shell.run("tmux", ["send-keys", "-t", agent, "Enter"]).pipe(Effect.mapError(failed))
     })
 
-    const notify = Effect.fn("TmuxHost.notify")(function* (title: string, body: string) {
+    const notify = Effect.fn("TmuxHost.notify")(function* (title: Text, body: Text) {
       yield* shell.run("tmux", ["display-message", `prwatch: ${title}: ${body.split("\n")[0] ?? ""}`]).pipe(Effect.ignore)
     })
 

@@ -16,6 +16,7 @@ prwatch watches the user's open pull requests and types each new change into the
 
 ## Modules
 
+- `Brands`: the branded strings and numbers (ids, SHAs, logins, URLs, times, text) and GitHub's enums as literal unions. Values are decoded into brands at the edge (GitHub, the multiplexers, the CLI, the state files).
 - `Shell`: the only module that starts processes. Every command has a 30 second timeout and fails with `CommandFailed`.
 - `GitHub`: GraphQL through `gh`, decoded with Schema into `PullRequest`. `pullRequests` fetches every open pull request in full; `stamps` is a cheap probe of what each one looks like now (updated time, head, CI, review decision, mergeable); `pullsById` fetches only the ones whose stamp moved.
 - `Changes`: pure. Diffs a pull request against what was seen last time. The first sight of a pull request is a baseline and produces nothing.
@@ -29,6 +30,7 @@ prwatch watches the user's open pull requests and types each new change into the
 
 - Only `src/Shell.ts` may import `effect/process`.
 - No nested ternaries, `const` only, `type` instead of `interface`.
+- No bare `string` or `number` in `src/` or `bin/` (`prwatch/branded`, in `tools/oxlint-plugin.ts`): use a brand from `src/Brands.ts` or a literal union, and a `Schema.String`/`Schema.Number` only when it is piped into `Schema.brand`. `src/Shell.ts` is exempt, because it is where raw process text comes in; it hands back `Stdout`.
 
 ## What reviewers check instead
 
