@@ -1,21 +1,39 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 
-import { Branch, PrKey, RepoSlug, prKey } from "./Ids.ts"
+import {
+  Branch,
+  FilePath,
+  Fingerprint,
+  IsoTime,
+  LineNumber,
+  Login,
+  Markdown,
+  NodeId,
+  PrKey,
+  PrNumber,
+  RepoSlug,
+  ReviewDecision,
+  ReviewState,
+  Sha,
+  Text,
+  Url,
+  prKey
+} from "./Brands.ts"
 import { type CommandFailed, Shell } from "./Shell.ts"
 
 export const ItemKind = Schema.Literals(["review", "comment", "thread"])
 
 export const Item = Schema.Struct({
-  id: Schema.String,
+  id: NodeId,
   kind: ItemKind,
-  author: Schema.String,
+  author: Login,
   bot: Schema.Boolean,
-  body: Schema.String,
-  url: Schema.String,
-  at: Schema.String,
-  state: Schema.optionalKey(Schema.String),
-  path: Schema.optionalKey(Schema.String),
-  line: Schema.optionalKey(Schema.Number),
+  body: Markdown,
+  url: Url,
+  at: IsoTime,
+  state: Schema.optionalKey(ReviewState),
+  path: Schema.optionalKey(FilePath),
+  line: Schema.optionalKey(LineNumber),
   involvesYou: Schema.Boolean
 })
 export type Item = typeof Item.Type
@@ -23,96 +41,101 @@ export type Item = typeof Item.Type
 export const Checks = Schema.Literals(["pending", "passed", "failed", "none"])
 export type Checks = typeof Checks.Type
 
+export const Mergeable = Schema.Literals(["yes", "no", "unknown"])
+
+export const Role = Schema.Literals(["author", "reviewer"])
+export type Role = typeof Role.Type
+
 export const PullRequest = Schema.Struct({
-  id: Schema.String,
+  id: NodeId,
   key: PrKey,
   repo: RepoSlug,
-  number: Schema.Number,
-  title: Schema.String,
-  url: Schema.String,
+  number: PrNumber,
+  title: Text,
+  url: Url,
   branch: Branch,
   draft: Schema.Boolean,
-  head: Schema.String,
+  head: Sha,
   checks: Checks,
-  decision: Schema.NullOr(Schema.String),
-  mergeable: Schema.Literals(["yes", "no", "unknown"]),
-  role: Schema.Literals(["author", "reviewer"]),
-  commits: Schema.Array(Schema.String),
+  decision: Schema.NullOr(ReviewDecision),
+  mergeable: Mergeable,
+  role: Role,
+  commits: Schema.Array(Sha),
   items: Schema.Array(Item)
 })
 export type PullRequest = typeof PullRequest.Type
 
-type Role = PullRequest["role"]
+export type Stamp = { readonly id: NodeId; readonly role: Role; readonly stamp: Fingerprint }
 
-export type Stamp = { readonly id: string; readonly role: Role; readonly stamp: string }
+const Typename = Schema.String.pipe(Schema.brand("Typename"))
 
-const Author = Schema.NullOr(Schema.Struct({ login: Schema.String, __typename: Schema.String }))
+const MergeableState = Schema.Literals(["MERGEABLE", "CONFLICTING", "UNKNOWN"])
+
+const StatusState = Schema.Literals(["EXPECTED", "ERROR", "FAILURE", "PENDING", "SUCCESS"])
+type StatusState = typeof StatusState.Type
+
+const Author = Schema.NullOr(Schema.Struct({ login: Login, __typename: Typename }))
 
 const Nodes = <S extends Schema.Top>(item: S) => Schema.Struct({ nodes: Schema.Array(item) })
 
 const CommentNode = Schema.Struct({
-  id: Schema.String,
-  createdAt: Schema.String,
+  id: NodeId,
+  createdAt: IsoTime,
   author: Author,
-  body: Schema.String,
-  url: Schema.String
+  body: Markdown,
+  url: Url
 })
 
+const Rollup = Schema.NullOr(Schema.Struct({ state: StatusState }))
+
 const PullNode = Schema.Struct({
-  id: Schema.String,
-  number: Schema.Number,
-  title: Schema.String,
-  url: Schema.String,
-  headRefName: Schema.String,
+  id: NodeId,
+  number: PrNumber,
+  title: Text,
+  url: Url,
+  headRefName: Branch,
   isDraft: Schema.Boolean,
-  mergeable: Schema.String,
-  reviewDecision: Schema.NullOr(Schema.String),
-  repository: Schema.Struct({ nameWithOwner: Schema.String, isPrivate: Schema.Boolean }),
+  mergeable: MergeableState,
+  reviewDecision: Schema.NullOr(ReviewDecision),
+  repository: Schema.Struct({ nameWithOwner: RepoSlug, isPrivate: Schema.Boolean }),
   reviews: Nodes(
     Schema.Struct({
-      id: Schema.String,
-      state: Schema.String,
-      submittedAt: Schema.NullOr(Schema.String),
+      id: NodeId,
+      state: ReviewState,
+      submittedAt: Schema.NullOr(IsoTime),
       author: Author,
-      body: Schema.String,
-      url: Schema.String
+      body: Markdown,
+      url: Url
     })
   ),
   comments: Nodes(CommentNode),
   reviewThreads: Nodes(
     Schema.Struct({
-      path: Schema.String,
-      line: Schema.NullOr(Schema.Number),
+      path: FilePath,
+      line: Schema.NullOr(LineNumber),
       comments: Nodes(CommentNode)
     })
   ),
-  latest: Nodes(
-    Schema.Struct({
-      commit: Schema.Struct({
-        oid: Schema.String,
-        statusCheckRollup: Schema.NullOr(Schema.Struct({ state: Schema.String }))
-      })
-    })
-  ),
-  history: Nodes(Schema.Struct({ commit: Schema.Struct({ oid: Schema.String }) }))
+  latest: Nodes(Schema.Struct({ commit: Schema.Struct({ oid: Sha, statusCheckRollup: Rollup }) })),
+  history: Nodes(Schema.Struct({ commit: Schema.Struct({ oid: Sha }) }))
 })
 
 const StampNode = Schema.Struct({
-  id: Schema.String,
-  updatedAt: Schema.String,
-  headRefOid: Schema.String,
+  id: NodeId,
+  updatedAt: IsoTime,
+  headRefOid: Sha,
   isDraft: Schema.Boolean,
-  mergeable: Schema.String,
-  reviewDecision: Schema.NullOr(Schema.String),
+  mergeable: MergeableState,
+  reviewDecision: Schema.NullOr(ReviewDecision),
   repository: Schema.Struct({ isPrivate: Schema.Boolean }),
-  latest: Nodes(Schema.Struct({ commit: Schema.Struct({ statusCheckRollup: Schema.NullOr(Schema.Struct({ state: Schema.String })) }) }))
+  latest: Nodes(Schema.Struct({ commit: Schema.Struct({ statusCheckRollup: Rollup }) }))
 })
 
 const ResponseOf = <S extends Schema.Top>(node: S) =>
   Schema.Struct({
     data: Schema.Struct({
       viewer: Schema.Struct({
-        login: Schema.String,
+        login: Login,
         pullRequests: Nodes(node)
       }),
       commented: Nodes(Schema.Unknown),
@@ -122,7 +145,7 @@ const ResponseOf = <S extends Schema.Top>(node: S) =>
 
 const ByIdResponse = Schema.Struct({
   data: Schema.Struct({
-    viewer: Schema.Struct({ login: Schema.String }),
+    viewer: Schema.Struct({ login: Login }),
     nodes: Schema.Array(Schema.Unknown)
   })
 })
@@ -145,23 +168,29 @@ const STAMP_FIELDS = `
   latest: commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 `
 
-const reviewing = (alias: string, qualifier: string, fields: string) =>
+const Query = Schema.String.pipe(Schema.brand("Query"))
+type Query = typeof Query.Type
+
+type Fields = typeof FIELDS | typeof STAMP_FIELDS
+
+const reviewing = (alias: "commented" | "reviewed", qualifier: "commenter:@me" | "reviewed-by:@me", fields: Fields) =>
   `${alias}: search(query: "is:pr is:open -author:@me ${qualifier}", type: ISSUE, first: 30) { nodes { ... on PullRequest { ${fields} } } }`
 
-const queryOf = (fields: string) => `query {
+const queryOf = (fields: Fields) =>
+  Query.make(`query {
   viewer {
     login
     pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${fields} } }
   }
   ${reviewing("commented", "commenter:@me", fields)}
   ${reviewing("reviewed", "reviewed-by:@me", fields)}
-}`
+}`)
 
 const QUERY = queryOf(FIELDS)
 const PROBE = queryOf(STAMP_FIELDS)
-const BY_ID = `query($ids: [ID!]!) { viewer { login } nodes(ids: $ids) { ... on PullRequest { ${FIELDS} } } }`
+const BY_ID = Query.make(`query($ids: [ID!]!) { viewer { login } nodes(ids: $ids) { ... on PullRequest { ${FIELDS} } } }`)
 
-const checksOf = (state: string | undefined): Checks => {
+const checksOf = (state: StatusState | undefined): Checks => {
   if (state === undefined) return "none"
   if (state === "SUCCESS") return "passed"
   if (state === "FAILURE" || state === "ERROR") return "failed"
@@ -169,15 +198,17 @@ const checksOf = (state: string | undefined): Checks => {
   return "pending"
 }
 
-const mergeableOf = (state: string) => {
+const mergeableOf = (state: typeof MergeableState.Type) => {
   if (state === "MERGEABLE") return "yes" as const
   if (state === "CONFLICTING") return "no" as const
 
   return "unknown" as const
 }
 
+const GHOST = Login.make("ghost")
+
 const authorOf = (author: typeof Author.Type) => ({
-  author: author?.login ?? "ghost",
+  author: author?.login ?? GHOST,
   bot: author?.__typename === "Bot" || (author?.login ?? "").endsWith("[bot]")
 })
 
@@ -185,7 +216,7 @@ type Pull = typeof PullNode.Type
 
 const isPrivate = (pull: { readonly repository: { readonly isPrivate: boolean } }) => pull.repository.isPrivate
 
-const withRoles = <A extends { readonly id: string; readonly repository: { readonly isPrivate: boolean } }>(
+const withRoles = <A extends { readonly id: NodeId; readonly repository: { readonly isPrivate: boolean } }>(
   authored: readonly A[],
   others: readonly unknown[],
   decode: (node: unknown) => Option.Option<A>
@@ -202,21 +233,23 @@ const withRoles = <A extends { readonly id: string; readonly repository: { reado
 const stampOf = ({ node, role }: { readonly node: typeof StampNode.Type; readonly role: Role }): Stamp => ({
   id: node.id,
   role,
-  stamp: [
-    node.updatedAt,
-    node.headRefOid,
-    node.isDraft,
-    node.mergeable,
-    node.reviewDecision,
-    node.latest.nodes[0]?.commit.statusCheckRollup?.state
-  ].join(" ")
+  stamp: Fingerprint.make(
+    [
+      node.updatedAt,
+      node.headRefOid,
+      node.isDraft,
+      node.mergeable,
+      node.reviewDecision,
+      node.latest.nodes[0]?.commit.statusCheckRollup?.state
+    ].join(" ")
+  )
 })
 
-const mentions = (body: string, viewer: string) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
+const mentions = (body: Markdown, viewer: Login) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
 
-const itemsOf = (pull: Pull, viewer: string): readonly Item[] => [
+const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
   ...pull.reviews.nodes.flatMap((review) =>
-    review.state === "PENDING"
+    review.state === "PENDING" || review.submittedAt === null
       ? []
       : [
           {
@@ -225,7 +258,7 @@ const itemsOf = (pull: Pull, viewer: string): readonly Item[] => [
             ...authorOf(review.author),
             body: review.body,
             url: review.url,
-            at: review.submittedAt ?? "",
+            at: review.submittedAt,
             state: review.state,
             involvesYou: mentions(review.body, viewer)
           }
@@ -257,17 +290,19 @@ const itemsOf = (pull: Pull, viewer: string): readonly Item[] => [
   })
 ]
 
-const relevant = (role: Role, viewer: string) => (item: Item) => {
+const relevant = (role: Role, viewer: Login) => (item: Item) => {
   if (item.author === viewer) return false
   if (role === "author") return true
 
   return item.involvesYou
 }
 
+const NO_HEAD = Sha.make("")
+
 const toPullRequest =
-  (viewer: string, role: Role) =>
+  (viewer: Login, role: Role) =>
   (pull: Pull): PullRequest => {
-    const repo = Schema.decodeSync(RepoSlug)(pull.repository.nameWithOwner)
+    const repo = pull.repository.nameWithOwner
     const commit = pull.latest.nodes[0]?.commit
 
     return {
@@ -277,9 +312,9 @@ const toPullRequest =
       number: pull.number,
       title: pull.title,
       url: pull.url,
-      branch: Schema.decodeSync(Branch)(pull.headRefName),
+      branch: pull.headRefName,
       draft: pull.isDraft,
-      head: commit?.oid ?? "",
+      head: commit?.oid ?? NO_HEAD,
       checks: checksOf(commit?.statusCheckRollup?.state),
       decision: pull.reviewDecision,
       mergeable: mergeableOf(pull.mergeable),
@@ -290,7 +325,7 @@ const toPullRequest =
   }
 
 export class GitHubUnavailable extends Schema.TaggedError<GitHubUnavailable>()("GitHubUnavailable", {
-  reason: Schema.String
+  reason: Text
 }) {
   override get message() {
     return `could not read your pull requests from GitHub (${this.reason}). Is the gh CLI installed and logged in? Try: gh auth status`
@@ -300,7 +335,7 @@ export class GitHubUnavailable extends Schema.TaggedError<GitHubUnavailable>()("
 export class GitHub extends Context.Service<
   GitHub,
   {
-    readonly pullRequests: Effect.Effect<{ readonly viewer: string; readonly pulls: readonly PullRequest[] }, GitHubUnavailable>
+    readonly pullRequests: Effect.Effect<{ readonly viewer: Login; readonly pulls: readonly PullRequest[] }, GitHubUnavailable>
     readonly stamps: Effect.Effect<readonly Stamp[], GitHubUnavailable>
     readonly pullsById: (stamps: readonly Stamp[]) => Effect.Effect<readonly PullRequest[], GitHubUnavailable>
   }
@@ -310,10 +345,10 @@ export class GitHub extends Context.Service<
     Effect.gen(function* () {
       const shell = yield* Shell
 
-      const unavailable = (error: CommandFailed | Schema.SchemaError) => new GitHubUnavailable({ reason: error.message })
+      const unavailable = (error: CommandFailed | Schema.SchemaError) => new GitHubUnavailable({ reason: Text.make(error.message) })
 
-      const graphql = (query: string, variables: readonly string[] = []) =>
-        shell.run("gh", ["api", "graphql", "-f", `query=${query}`, ...variables.flatMap((variable) => ["-f", variable])])
+      const graphql = (query: Query, ids: readonly NodeId[] = []) =>
+        shell.run("gh", ["api", "graphql", "-f", `query=${query}`, ...ids.flatMap((id) => ["-f", `ids[]=${id}`])])
 
       const pullRequests = graphql(QUERY).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(PullNode)))),
@@ -349,7 +384,7 @@ export class GitHub extends Context.Service<
 
         const { data } = yield* graphql(
           BY_ID,
-          wanted.map((stamp) => `ids[]=${stamp.id}`)
+          wanted.map((stamp) => stamp.id)
         ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ByIdResponse))), Effect.mapError(unavailable))
 
         return data.nodes

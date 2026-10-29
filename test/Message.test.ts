@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest"
 
+import { Text } from "../src/Brands.ts"
 import { agentMessage } from "../src/Message.ts"
 import { item, pull } from "./fixtures.ts"
 
 describe("agentMessage", () => {
   it("names the pull request, each change with its location, and the instructions", () => {
-    const message = agentMessage(pull(), [{ kind: "item", item: item({ id: "a", path: "src/x.ts", line: 4 }) }], "Show the user first.")
+    const message = agentMessage(
+      pull(),
+      [{ kind: "item", item: item({ id: "a", path: "src/x.ts", line: 4 }) }],
+      Text.make("Show the user first.")
+    )
 
     expect(message).toBe(
       [
@@ -18,7 +23,11 @@ describe("agentMessage", () => {
 
   it("drops markup that bots wrap their comments in", () => {
     const body = "<!-- generated --> **Minor** <details><summary>log</summary>noise</details> Use a const here."
-    const message = agentMessage(pull(), [{ kind: "item", item: item({ id: "b", bot: true, author: "coderabbitai", body }) }], "")
+    const message = agentMessage(
+      pull(),
+      [{ kind: "item", item: item({ id: "b", bot: true, author: "coderabbitai", body }) }],
+      Text.make("")
+    )
 
     expect(message).toContain('from coderabbitai (bot): "**Minor** Use a const here."')
   })

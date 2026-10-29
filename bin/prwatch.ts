@@ -4,6 +4,7 @@ import { Config, Console, Duration, Effect, Layer, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
+import { PrKey, Text, agentId } from "../src/Brands.ts"
 import { GitHub } from "../src/GitHub.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
 import { HerdrHost } from "../src/hosts/Herdr.ts"
@@ -22,26 +23,28 @@ const hostFlag = Flag.Literals("host", ["auto", "herdr", "cmux", "tmux"]).pipe(
 const dryRun = Flag.Boolean("dry-run").pipe(Flag.withDescription("print what would be sent instead of sending it"), Flag.withDefault(false))
 const instructions = Flag.String("instructions").pipe(
   Flag.withDescription("the line appended to every message an agent gets"),
+  Flag.withSchema(Text),
   Flag.withDefault(DEFAULT_INSTRUCTIONS)
 )
 const reviewInstructions = Flag.String("review-instructions").pipe(
   Flag.withDescription("the line appended to messages about pull requests you are reviewing"),
+  Flag.withSchema(Text),
   Flag.withDefault(REVIEW_INSTRUCTIONS)
 )
 const interval = Flag.Int("interval").pipe(
   Flag.withDescription("seconds between full checks of every pull request"),
-  Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(15))),
+  Flag.withSchema(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(15)), Schema.brand("Seconds"))),
   Flag.withDefault(120)
 )
 const probe = Flag.Int("probe").pipe(
   Flag.withDescription("seconds between cheap checks for which pull requests changed; only those are fetched in full"),
-  Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(5))),
+  Flag.withSchema(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(5)), Schema.brand("Seconds"))),
   Flag.withDefault(10)
 )
 
-type HostName = "auto" | "herdr" | "cmux" | "tmux"
+type HostChoice = "auto" | "herdr" | "cmux" | "tmux"
 
-const answers = (command: string, args: readonly string[]) =>
+const answers = (command: "herdr" | "cmux", args: readonly ("agent" | "list" | "ping")[]) =>
   Effect.flatMap(Shell, (shell) =>
     shell.run(command, args).pipe(
       Effect.as(true),
@@ -56,7 +59,7 @@ const detectHost = Effect.gen(function* () {
   return TmuxHost
 })
 
-const hostLayer = (host: HostName) => {
+const hostLayer = (host: HostChoice) => {
   if (host === "herdr") return HerdrHost
   if (host === "cmux") return CmuxHost
   if (host === "tmux") return TmuxHost
@@ -64,7 +67,7 @@ const hostLayer = (host: HostName) => {
   return Layer.unwrap(detectHost)
 }
 
-const watcherLayer = (host: HostName) =>
+const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, hostLayer(host))), Layer.provide(Shell.layer))
 
 const run = Command.make(
@@ -114,22 +117,27 @@ const status = Command.make("status", { json: Flag.Boolean("json").pipe(Flag.wit
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("show the pull requests being watched and which need you"))
 
-const ack = Command.make("ack", { key: Argument.String("pull").pipe(Argument.withDescription("owner/name#number")) }, ({ key }) =>
+const PULL_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/
+
+const pullKey = (input: Text) => {
+  const url = PULL_URL.exec(input)
+  return Schema.decodeUnknownEffect(PrKey)(url === null ? input : `${url[1]}#${url[2]}`)
+}
+
+const pullArgument = Argument.String("pull").pipe(
+  Argument.withDescription("owner/name#number, or a pull request URL"),
+  Argument.withSchema(Text)
+)
+
+const ack = Command.make("ack", { pull: pullArgument }, ({ pull }) =>
   Effect.gen(function* () {
+    const key = yield* pullKey(pull)
     const found = yield* Bookkeeping.acknowledge(key)
     yield* Console.log(found ? `${key} no longer needs you` : `${key} is not being watched`)
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("mark a pull request as seen so it stops showing as needing you"))
 
-const pullKeys = Argument.String("pull").pipe(
-  Argument.withDescription("owner/name#number, or a pull request URL"),
-  Argument.variadic({ min: 1 })
-)
-
-const keyOf = (input: string) => {
-  const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(input)
-  return url === null ? input : `${url[1]}#${url[2]}`
-}
+const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))
 
 const callerPane = Effect.gen(function* () {
   const herdr = yield* Config.String("HERDR_PANE_ID").pipe(Config.withDefault(""))
@@ -149,8 +157,8 @@ const claim = Command.make("claim", { pulls: pullKeys, agent: agentFlag }, ({ pu
     const pane = agent || (yield* callerPane)
     if (pane === "") return yield* Console.error("prwatch claim: not inside a herdr or tmux pane; pass --agent <pane id>")
 
-    const keys = pulls.map(keyOf)
-    yield* Bookkeeping.claim(keys, pane)
+    const keys = yield* Effect.forEach(pulls, pullKey)
+    yield* Bookkeeping.claim(keys, agentId(pane))
     yield* Console.log(`${pane} now gets updates for ${keys.join(", ")}`)
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("send updates on these pull requests to this pane, wherever it is working"))
@@ -158,9 +166,9 @@ const claim = Command.make("claim", { pulls: pullKeys, agent: agentFlag }, ({ pu
 const release = Command.make("release", { pulls: pullKeys, agent: agentFlag }, ({ pulls, agent }) =>
   Effect.gen(function* () {
     const pane = agent || (yield* callerPane)
-    const keys = pulls.map(keyOf)
+    const keys = yield* Effect.forEach(pulls, pullKey)
 
-    yield* Bookkeeping.release(keys, pane === "" ? undefined : pane)
+    yield* Bookkeeping.release(keys, pane === "" ? undefined : agentId(pane))
     yield* Console.log(`released ${keys.join(", ")}${pane === "" ? " for every pane" : ` for ${pane}`}`)
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("stop sending these pull requests to this pane"))

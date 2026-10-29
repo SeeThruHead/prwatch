@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
 
+import { Fingerprint, NodeId, Stdout } from "../src/Brands.ts"
 import { GitHub } from "../src/GitHub.ts"
 import { Shell } from "../src/Shell.ts"
 
@@ -42,7 +43,7 @@ const response = {
   }
 }
 
-const shell = Layer.succeed(Shell, Shell.of({ run: () => Effect.succeed(JSON.stringify(response)) }))
+const shell = Layer.succeed(Shell, Shell.of({ run: () => Effect.succeed(Stdout.make(JSON.stringify(response))) }))
 
 const keys = GitHub.use((github) => github.pullRequests).pipe(
   Effect.map(({ pulls }) => pulls.map((pull) => pull.key)),
@@ -75,7 +76,9 @@ const probe = (state: string) => ({
 })
 
 const github = (reply: (args: readonly string[]) => unknown) =>
-  GitHub.layer.pipe(Layer.provide(Layer.succeed(Shell, Shell.of({ run: (_, args) => Effect.sync(() => JSON.stringify(reply(args))) }))))
+  GitHub.layer.pipe(
+    Layer.provide(Layer.succeed(Shell, Shell.of({ run: (_, args) => Effect.sync(() => Stdout.make(JSON.stringify(reply(args)))) })))
+  )
 
 describe("GitHub.stamps", () => {
   const stampsFor = (state: string) =>
@@ -104,7 +107,9 @@ describe("GitHub.pullsById", () => {
       return { data: { viewer: { login: "me" }, nodes: [node("acme/private", true, 3), null] } }
     })
     const pulls = await Effect.runPromise(
-      GitHub.use((service) => service.pullsById([{ id: "PR_3", role: "reviewer", stamp: "x" }])).pipe(Effect.provide(layer))
+      GitHub.use((service) => service.pullsById([{ id: NodeId.make("PR_3"), role: "reviewer", stamp: Fingerprint.make("x") }])).pipe(
+        Effect.provide(layer)
+      )
     )
 
     expect(pulls.map((pull) => [pull.key, pull.role])).toEqual([["acme/private#3", "reviewer"]])

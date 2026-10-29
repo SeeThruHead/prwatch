@@ -1,6 +1,7 @@
 import { Option } from "effect"
 import { describe, expect, it } from "vitest"
 
+import { Url } from "../src/Brands.ts"
 import { slugFromRemote } from "../src/Workspace.ts"
 
 describe("slugFromRemote", () => {
@@ -10,10 +11,10 @@ describe("slugFromRemote", () => {
     ["https://github.com/acme/app.git\n", "acme/app"],
     ["ssh://git@github.com/acme/my.repo.git", "acme/my.repo"]
   ])("reads %s", (remote, slug) => {
-    expect(slugFromRemote(remote)).toEqual(Option.some(slug))
+    expect(slugFromRemote(Url.make(remote))).toEqual(Option.some(slug))
   })
 
   it("ignores remotes that are not GitHub", () => {
-    expect(slugFromRemote("git@gitlab.com:acme/app.git")).toEqual(Option.none())
+    expect(slugFromRemote(Url.make("git@gitlab.com:acme/app.git"))).toEqual(Option.none())
   })
 })

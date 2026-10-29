@@ -1,28 +1,28 @@
-import { type Item, type PullRequest } from "../src/GitHub.ts"
-import { branch, prKey, repoSlug } from "../src/Ids.ts"
+import { Schema } from "effect"
 
-export const item = (overrides: Partial<Item> & Pick<Item, "id">): Item => ({
-  kind: "thread",
-  author: "reviewer",
-  bot: false,
-  body: "Could this be simpler?",
-  url: `https://github.com/acme/app/pull/1#${overrides.id}`,
-  at: "2026-01-01T00:00:00Z",
-  involvesYou: false,
-  ...overrides
-})
+import { Item, PullRequest } from "../src/GitHub.ts"
 
-export const pull = (overrides: Partial<PullRequest> = {}): PullRequest => {
-  const repo = repoSlug("acme/app")
+export const item = (overrides: Partial<typeof Item.Encoded> & Pick<typeof Item.Encoded, "id">): Item =>
+  Schema.decodeUnknownSync(Item)({
+    kind: "thread",
+    author: "reviewer",
+    bot: false,
+    body: "Could this be simpler?",
+    url: `https://github.com/acme/app/pull/1#${overrides.id}`,
+    at: "2026-01-01T00:00:00Z",
+    involvesYou: false,
+    ...overrides
+  })
 
-  return {
+export const pull = (overrides: Partial<typeof PullRequest.Encoded> = {}): PullRequest =>
+  Schema.decodeUnknownSync(PullRequest)({
     id: "PR_1",
-    key: prKey(repo, 1),
-    repo,
+    key: "acme/app#1",
+    repo: "acme/app",
     number: 1,
     title: "Add the thing",
     url: "https://github.com/acme/app/pull/1",
-    branch: branch("feature/thing"),
+    branch: "feature/thing",
     draft: false,
     head: "abc1234def",
     checks: "pending",
@@ -32,5 +32,4 @@ export const pull = (overrides: Partial<PullRequest> = {}): PullRequest => {
     commits: ["abc1234def"],
     items: [],
     ...overrides
-  }
-}
+  })

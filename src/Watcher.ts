@@ -1,14 +1,14 @@
-import { Clock, Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect"
+import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect"
 
 import { type Change, type Seen, changesSince, needsYou, snapshotOf } from "./Changes.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
-import { type Branch, type RepoSlug, sameRepo } from "./Ids.ts"
+import { type Branch, Count, type HostName, type IsoTime, type RepoSlug, type Sha, Text, isoTime, sameRepo } from "./Brands.ts"
 import { agentMessage, notification, summary } from "./Message.ts"
-import { type Claims, type Status, Store } from "./Store.ts"
+import { type Claims, type Status, type StatusPull, Store } from "./Store.ts"
 import { Workspace } from "./Workspace.ts"
 
-export type Placed = Agent & { readonly repo: RepoSlug; readonly branch: Option.Option<Branch>; readonly commit: string }
+export type Placed = Agent & { readonly repo: RepoSlug; readonly branch: Option.Option<Branch>; readonly commit: Sha }
 
 type Delivery = {
   readonly pull: PullRequest
@@ -53,12 +53,11 @@ const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Foun
   })
 
 export const liveClaims = (claims: Claims, pulls: readonly PullRequest[], agents: readonly Agent[]): Claims => {
-  const open = new Set<string>(pulls.map((pull) => pull.key))
-  const present = new Set<string>(agents.map((agent) => agent.id))
+  const present = new Set(agents.map((agent) => agent.id))
 
   return Object.fromEntries(
     Object.entries(claims)
-      .filter(([key]) => open.has(key))
+      .filter(([key]) => pulls.some((pull) => pull.key === key))
       .map(([key, entries]) => [key, entries.filter((entry) => present.has(entry.agent))] as const)
       .filter(([, entries]) => entries.length > 0)
   )
@@ -67,7 +66,7 @@ export const liveClaims = (claims: Claims, pulls: readonly PullRequest[], agents
 const nextSeen = (pulls: readonly PullRequest[], seen: Seen | undefined): Seen =>
   Object.fromEntries(pulls.map((pull) => [pull.key, snapshotOf(pull, seen?.[pull.key])]))
 
-const latest = (delivery: Delivery | undefined, before: Status["pulls"][number] | undefined, at: string) => {
+const latest = (delivery: Delivery | undefined, before: StatusPull | undefined, at: IsoTime) => {
   if (delivery !== undefined) return { last: summary(delivery.changes), lastAt: at }
   if (before?.last === undefined) return {}
 
@@ -80,15 +79,15 @@ export const statsOf = (pull: PullRequest) => ({
   checks: pull.checks,
   decision: pull.decision,
   mergeable: pull.mergeable,
-  comments: pull.items.filter((item) => !item.bot).length
+  comments: Count.make(pull.items.filter((item) => !item.bot).length)
 })
 
 const nextStatus = (
   previous: Status | undefined,
   pulls: readonly PullRequest[],
   deliveries: readonly Delivery[],
-  host: string,
-  at: string
+  host: HostName,
+  at: IsoTime
 ): Status => ({
   updatedAt: at,
   host,
@@ -111,7 +110,7 @@ const nextStatus = (
   })
 })
 
-export type Synced = { readonly at: number; readonly stamps: readonly Stamp[]; readonly pulls: readonly PullRequest[] }
+export type Synced = { readonly at: DateTime.Utc; readonly stamps: readonly Stamp[]; readonly pulls: readonly PullRequest[] }
 
 export const movedSince = (synced: Synced, stamps: readonly Stamp[]): readonly Stamp[] => {
   const known = new Map(synced.stamps.map((stamp) => [stamp.id, stamp.stamp]))
@@ -126,13 +125,13 @@ export const refreshed = (synced: Synced, stamps: readonly Stamp[], fresh: reado
     return pull === undefined ? [] : [pull]
   })
 
-type Options = { readonly dryRun: boolean; readonly instructions: string; readonly reviewInstructions: string }
+type Options = { readonly dryRun: boolean; readonly instructions: Text; readonly reviewInstructions: Text }
 
 export class Watcher extends Context.Service<
   Watcher,
   {
     readonly cycle: (options: Options) => Effect.Effect<readonly Delivery[], unknown>
-    readonly watch: (options: Options & { readonly interval: Duration.Input; readonly probe: Duration.Input }) => Effect.Effect<never>
+    readonly watch: (options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration }) => Effect.Effect<never>
   }
 >()("prwatch/Watcher") {
   static readonly layer = Layer.effect(
@@ -194,7 +193,7 @@ export class Watcher extends Context.Service<
       const dispatch = Effect.fn("Watcher.dispatch")(function* (pulls: readonly PullRequest[], options: Options) {
         const [seen, previous, found, claims] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
         const deliveries = plan(pulls, seen, found, claims)
-        const at = DateTime.formatIso(yield* DateTime.now)
+        const at = isoTime(yield* DateTime.now)
 
         yield* Effect.forEach(deliveries, (delivery) => send(delivery, options), { discard: true })
         if (options.dryRun) return deliveries
@@ -212,12 +211,12 @@ export class Watcher extends Context.Service<
         return yield* dispatch(pulls, options)
       })
 
-      const tick = Effect.fn("Watcher.tick")(function* (state: Ref.Ref<Synced | undefined>, options: Options, interval: Duration.Input) {
+      const tick = Effect.fn("Watcher.tick")(function* (state: Ref.Ref<Synced | undefined>, options: Options, interval: Duration.Duration) {
         const synced = yield* Ref.get(state)
-        const now = yield* Clock.currentTimeMillis
+        const now = yield* DateTime.now
         const stamps = yield* github.stamps
 
-        if (synced === undefined || now - synced.at >= Duration.toMillis(interval)) {
+        if (synced === undefined || Duration.isGreaterThanOrEqualTo(DateTime.distance(synced.at, now), interval)) {
           const { pulls } = yield* github.pullRequests
           yield* dispatch(pulls, options)
           return yield* Ref.set(state, { at: now, stamps, pulls })
@@ -233,15 +232,17 @@ export class Watcher extends Context.Service<
 
       const recordFailure = (error: unknown) =>
         Effect.gen(function* () {
-          const message = Predicate.hasProperty(error, "message") && Predicate.isString(error.message) ? error.message : String(error)
+          const message = Text.make(
+            Predicate.hasProperty(error, "message") && Predicate.isString(error.message) ? error.message : String(error)
+          )
           const previous = yield* store.status
-          const at = DateTime.formatIso(yield* DateTime.now)
+          const at = isoTime(yield* DateTime.now)
 
           yield* Effect.logWarning(message)
           yield* store.saveStatus({ updatedAt: at, host: host.name, error: message, pulls: previous?.pulls ?? [] }).pipe(Effect.ignore)
         })
 
-      const watch = (options: Options & { readonly interval: Duration.Input; readonly probe: Duration.Input }) =>
+      const watch = (options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration }) =>
         Effect.flatMap(Ref.make<Synced | undefined>(undefined), (state) =>
           tick(state, options, options.interval).pipe(
             Effect.catch(recordFailure),
