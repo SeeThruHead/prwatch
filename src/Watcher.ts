@@ -1,7 +1,7 @@
-import { Context, DateTime, Effect, Layer, Option, Predicate, Schedule, type Duration } from "effect"
+import { Clock, Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect"
 
 import { type Change, type Seen, changesSince, needsYou, snapshotOf } from "./Changes.ts"
-import { GitHub, type PullRequest } from "./GitHub.ts"
+import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
 import { type Branch, type RepoSlug, sameRepo } from "./Ids.ts"
 import { agentMessage, notification, summary } from "./Message.ts"
@@ -111,20 +111,28 @@ const nextStatus = (
   })
 })
 
+export type Synced = { readonly at: number; readonly stamps: readonly Stamp[]; readonly pulls: readonly PullRequest[] }
+
+export const movedSince = (synced: Synced, stamps: readonly Stamp[]): readonly Stamp[] => {
+  const known = new Map(synced.stamps.map((stamp) => [stamp.id, stamp.stamp]))
+
+  return stamps.filter((stamp) => known.get(stamp.id) !== stamp.stamp)
+}
+
+export const refreshed = (synced: Synced, stamps: readonly Stamp[], fresh: readonly PullRequest[]): readonly PullRequest[] =>
+  stamps.flatMap((stamp) => {
+    const pull = fresh.find((candidate) => candidate.id === stamp.id) ?? synced.pulls.find((candidate) => candidate.id === stamp.id)
+
+    return pull === undefined ? [] : [pull]
+  })
+
+type Options = { readonly dryRun: boolean; readonly instructions: string; readonly reviewInstructions: string }
+
 export class Watcher extends Context.Service<
   Watcher,
   {
-    readonly cycle: (options: {
-      readonly dryRun: boolean
-      readonly instructions: string
-      readonly reviewInstructions: string
-    }) => Effect.Effect<readonly Delivery[], unknown>
-    readonly watch: (options: {
-      readonly dryRun: boolean
-      readonly instructions: string
-      readonly reviewInstructions: string
-      readonly interval: Duration.Input
-    }) => Effect.Effect<never>
+    readonly cycle: (options: Options) => Effect.Effect<readonly Delivery[], unknown>
+    readonly watch: (options: Options & { readonly interval: Duration.Input; readonly probe: Duration.Input }) => Effect.Effect<never>
   }
 >()("prwatch/Watcher") {
   static readonly layer = Layer.effect(
@@ -155,10 +163,7 @@ export class Watcher extends Context.Service<
         return { agents, placed: located.flatMap(Option.toArray) }
       })
 
-      const send = Effect.fn("Watcher.send")(function* (
-        delivery: Delivery,
-        options: { readonly dryRun: boolean; readonly instructions: string; readonly reviewInstructions: string }
-      ) {
+      const send = Effect.fn("Watcher.send")(function* (delivery: Delivery, options: Options) {
         const message = agentMessage(
           delivery.pull,
           delivery.changes,
@@ -186,15 +191,8 @@ export class Watcher extends Context.Service<
         if (alert) yield* host.notify(title, body)
       })
 
-      const cycle = Effect.fn("Watcher.cycle")(function* (options: {
-        readonly dryRun: boolean
-        readonly instructions: string
-        readonly reviewInstructions: string
-      }) {
-        const [{ pulls }, seen, previous, found, claims] = yield* Effect.all(
-          [github.pullRequests, store.seen, store.status, placed(), store.claims],
-          { concurrency: 5 }
-        )
+      const dispatch = Effect.fn("Watcher.dispatch")(function* (pulls: readonly PullRequest[], options: Options) {
+        const [seen, previous, found, claims] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
         const deliveries = plan(pulls, seen, found, claims)
         const at = DateTime.formatIso(yield* DateTime.now)
 
@@ -208,6 +206,31 @@ export class Watcher extends Context.Service<
         return deliveries
       })
 
+      const cycle = Effect.fn("Watcher.cycle")(function* (options: Options) {
+        const { pulls } = yield* github.pullRequests
+
+        return yield* dispatch(pulls, options)
+      })
+
+      const tick = Effect.fn("Watcher.tick")(function* (state: Ref.Ref<Synced | undefined>, options: Options, interval: Duration.Input) {
+        const synced = yield* Ref.get(state)
+        const now = yield* Clock.currentTimeMillis
+        const stamps = yield* github.stamps
+
+        if (synced === undefined || now - synced.at >= Duration.toMillis(interval)) {
+          const { pulls } = yield* github.pullRequests
+          yield* dispatch(pulls, options)
+          return yield* Ref.set(state, { at: now, stamps, pulls })
+        }
+
+        const moved = movedSince(synced, stamps)
+        if (moved.length === 0 && stamps.length === synced.stamps.length) return
+
+        const pulls = refreshed(synced, stamps, yield* github.pullsById(moved))
+        yield* dispatch(pulls, options)
+        yield* Ref.set(state, { at: synced.at, stamps, pulls })
+      })
+
       const recordFailure = (error: unknown) =>
         Effect.gen(function* () {
           const message = Predicate.hasProperty(error, "message") && Predicate.isString(error.message) ? error.message : String(error)
@@ -218,12 +241,14 @@ export class Watcher extends Context.Service<
           yield* store.saveStatus({ updatedAt: at, host: host.name, error: message, pulls: previous?.pulls ?? [] }).pipe(Effect.ignore)
         })
 
-      const watch = (options: {
-        readonly dryRun: boolean
-        readonly instructions: string
-        readonly reviewInstructions: string
-        readonly interval: Duration.Input
-      }) => cycle(options).pipe(Effect.catch(recordFailure), Effect.repeat(Schedule.spaced(options.interval)), Effect.andThen(Effect.never))
+      const watch = (options: Options & { readonly interval: Duration.Input; readonly probe: Duration.Input }) =>
+        Effect.flatMap(Ref.make<Synced | undefined>(undefined), (state) =>
+          tick(state, options, options.interval).pipe(
+            Effect.catch(recordFailure),
+            Effect.repeat(Schedule.spaced(options.probe)),
+            Effect.andThen(Effect.never)
+          )
+        )
 
       return Watcher.of({ cycle, watch })
     })

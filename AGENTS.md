@@ -17,13 +17,13 @@ prwatch watches the user's open pull requests and types each new change into the
 ## Modules
 
 - `Shell`: the only module that starts processes. Every command has a 30 second timeout and fails with `CommandFailed`.
-- `GitHub`: one GraphQL query through `gh` for the viewer's open pull requests, decoded with Schema into `PullRequest`.
+- `GitHub`: GraphQL through `gh`, decoded with Schema into `PullRequest`. `pullRequests` fetches every open pull request in full; `stamps` is a cheap probe of what each one looks like now (updated time, head, CI, review decision, mergeable); `pullsById` fetches only the ones whose stamp moved.
 - `Changes`: pure. Diffs a pull request against what was seen last time. The first sight of a pull request is a baseline and produces nothing.
 - `Message`: pure. The text an agent receives and the notification text.
 - `Host`: the service a multiplexer provides. `hosts/Herdr.ts` and `hosts/Tmux.ts` are its layers.
 - `Workspace`: the repository and branch of a working directory, read with git.
 - `Store`: `seen.json` and `status.json` under `PRWATCH_HOME`.
-- `Watcher`: one cycle (fetch, diff, route, deliver, notify, save) and the repeating watch.
+- `Watcher`: one cycle (fetch, diff, route, deliver, notify, save) and the repeating watch, which probes stamps every `--probe` seconds, refetches only what moved, and fetches everything every `--interval` seconds.
 
 ## What the linter enforces
 

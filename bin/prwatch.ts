@@ -29,9 +29,14 @@ const reviewInstructions = Flag.String("review-instructions").pipe(
   Flag.withDefault(REVIEW_INSTRUCTIONS)
 )
 const interval = Flag.Int("interval").pipe(
-  Flag.withDescription("seconds between checks"),
+  Flag.withDescription("seconds between full checks of every pull request"),
   Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(15))),
-  Flag.withDefault(60)
+  Flag.withDefault(120)
+)
+const probe = Flag.Int("probe").pipe(
+  Flag.withDescription("seconds between cheap checks for which pull requests changed; only those are fetched in full"),
+  Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(5))),
+  Flag.withDefault(10)
 )
 
 type HostName = "auto" | "herdr" | "cmux" | "tmux"
@@ -64,12 +69,18 @@ const watcherLayer = (host: HostName) =>
 
 const run = Command.make(
   "run",
-  { host: hostFlag, dryRun, instructions, reviewInstructions, interval },
-  ({ host, dryRun, instructions, reviewInstructions, interval }) =>
+  { host: hostFlag, dryRun, instructions, reviewInstructions, interval, probe },
+  ({ host, dryRun, instructions, reviewInstructions, interval, probe }) =>
     Effect.gen(function* () {
       const watcher = yield* Watcher
-      yield* Console.log(`prwatch: checking your pull requests every ${interval}s`)
-      return yield* watcher.watch({ dryRun, instructions, reviewInstructions, interval: Duration.seconds(interval) })
+      yield* Console.log(`prwatch: checking which pull requests changed every ${probe}s, and all of them every ${interval}s`)
+      return yield* watcher.watch({
+        dryRun,
+        instructions,
+        reviewInstructions,
+        interval: Duration.seconds(interval),
+        probe: Duration.seconds(probe)
+      })
     }).pipe(Effect.provide(watcherLayer(host)))
 ).pipe(Command.withDescription("watch your pull requests and hand each change to the agent on that branch"))
 
