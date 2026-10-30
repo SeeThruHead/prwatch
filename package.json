@@ -1,6 +1,6 @@
 {
   "name": "prwatch",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "description": "Watch your pull requests and hand new reviews, comments and CI results to the coding agent already working on that branch.",
   "license": "MIT",
   "bin": {
