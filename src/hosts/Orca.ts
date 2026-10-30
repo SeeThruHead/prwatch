@@ -28,6 +28,7 @@ export const agentsOf = (terminals: readonly (typeof Terminal.Type)[]) =>
   terminals.filter(isAgent).map((terminal) => ({
     id: terminal.handle,
     cwd: terminal.worktreePath,
+    ...(terminal.agentIdentity === undefined ? {} : { program: terminal.agentIdentity }),
     label: Text.make(`${terminal.agentIdentity} in orca "${terminal.title}"`),
     status: "unknown" as const
   }))

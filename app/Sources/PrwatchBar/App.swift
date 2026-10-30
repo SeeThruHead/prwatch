@@ -232,7 +232,7 @@ struct PullRow: View {
       }
       HStack(spacing: 6) {
         Button { watch.open(pull) } label: { Label("Open", systemImage: "safari") }
-        if pull.agentId != nil, watch.status?.host == "herdr" {
+        if let agentId = pull.agentId, watch.status?.host == "herdr", !agentId.hasPrefix("claude:") {
           Button { watch.focus(pull) } label: { Label("Pane", systemImage: "terminal") }
         }
         if pull.needsYou {

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Config, Console, Duration, Effect, Layer, Schedule, Schema } from "effect"
+import { Config, Console, Duration, Effect, Layer, Option, Schedule, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
 import { PrKey, Text, agentId } from "../src/Brands.ts"
 import { GitHub } from "../src/GitHub.ts"
+import { callerSession, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
 import { HerdrHost } from "../src/hosts/Herdr.ts"
 import { OrcaHost } from "../src/hosts/Orca.ts"
@@ -71,7 +72,10 @@ const hostLayer = (host: HostChoice) => {
 }
 
 const watcherLayer = (host: HostChoice) =>
-  Watcher.layer.pipe(Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, hostLayer(host))), Layer.provide(Shell.layer))
+  Watcher.layer.pipe(
+    Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, withClaudeSessions(hostLayer(host)))),
+    Layer.provide(Shell.layer)
+  )
 
 const isAlive = (pid: typeof process.ppid) => {
   try {
@@ -160,6 +164,9 @@ const ack = Command.make("ack", { pull: pullArgument }, ({ pull }) =>
 const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))
 
 const callerPane = Effect.gen(function* () {
+  const session = yield* callerSession
+  if (Option.isSome(session)) return session.value
+
   const herdr = yield* Config.String("HERDR_PANE_ID").pipe(Config.withDefault(""))
   const cmux = yield* Config.String("CMUX_WORKSPACE_ID").pipe(Config.withDefault(""))
   const orca = yield* Config.String("ORCA_TERMINAL_HANDLE").pipe(Config.withDefault(""))
@@ -170,7 +177,7 @@ const callerPane = Effect.gen(function* () {
 
 const agentFlag = Flag.String("agent").pipe(
   Flag.withDescription(
-    "the pane id to send to; defaults to the pane this runs in ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID, $ORCA_TERMINAL_HANDLE or $TMUX_PANE)"
+    "the agent to send to; defaults to the Claude Code session this runs in, then the pane ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID, $ORCA_TERMINAL_HANDLE or $TMUX_PANE)"
   ),
   Flag.withDefault("")
 )

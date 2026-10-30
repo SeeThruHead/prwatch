@@ -44,6 +44,7 @@ export const HerdrHost = Layer.effect(
         result.agents.map((agent) => ({
           id: agent.pane_id,
           cwd: agent.cwd,
+          program: agent.agent,
           label: Text.make(
             `${agent.agent} in ${agent.pane_id}${agent.terminal_title_stripped ? ` (${agent.terminal_title_stripped})` : ""}`
           ),
