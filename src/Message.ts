@@ -1,4 +1,4 @@
-import { type FilePath, type LineNumber, type Markdown, Text } from "./Brands.ts"
+import { type FilePath, type LineNumber, type Markdown, Text, type Url } from "./Brands.ts"
 import type { Change } from "./Changes.ts"
 import type { PullRequest } from "./GitHub.ts"
 
@@ -64,6 +64,15 @@ export const checkMessage = (pull: PullRequest, instructions: Text) =>
     [
       `[prwatch] the user asked you to check the comments on ${pull.key} "${pull.title}" (${pull.url}).`,
       CHECK_ASKS[pull.role],
+      instructions
+    ].join("\n")
+  )
+
+export const startMessage = (url: Url, instructions: Text) =>
+  Text.make(
+    [
+      url,
+      "Make sure the review comments on this pull request have been resolved: read every thread with gh and report which have been resolved and which have not.",
       instructions
     ].join("\n")
   )

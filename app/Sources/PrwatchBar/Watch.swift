@@ -137,11 +137,19 @@ final class Watch: ObservableObject {
   }
 
   static let asking = "asking…"
+  static let noAgent = "no agent on this branch"
 
   func check(_ pull: Pull) {
-    let key = pull.key
+    report(pull.key, "check")
+  }
+
+  func start(_ pull: Pull) {
+    report(pull.key, "start")
+  }
+
+  private func report(_ key: String, _ command: String) {
     checks[key] = Self.asking
-    let process = login("'\(helper)' check '\(key)' 2>&1")
+    let process = login("'\(helper)' \(command) '\(key)' 2>&1")
     let output = Pipe()
     process.standardOutput = output
     process.terminationHandler = { [weak self] _ in

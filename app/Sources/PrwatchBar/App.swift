@@ -257,6 +257,11 @@ struct PullRow: View {
         Button { watch.check(pull) } label: { Label("Check comments", systemImage: "text.bubble") }
           .disabled(watch.checks[pull.key] == Watch.asking)
           .help("Ask the agent on this branch which review comments are resolved")
+        if pull.agent == nil || watch.checks[pull.key] == Watch.noAgent {
+          Button { watch.start(pull) } label: { Label("Start agent", systemImage: "play.circle") }
+            .disabled(watch.checks[pull.key] == Watch.asking)
+            .help("Start Claude in Orca to report which review comments are resolved")
+        }
         if let agentId = pull.agentId, watch.status?.host == "herdr", !agentId.hasPrefix("claude:") {
           Button { watch.focus(pull) } label: { Label("Pane", systemImage: "terminal") }
         }

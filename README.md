@@ -60,6 +60,7 @@ prwatch run               # see which pull requests changed every 10 seconds (--
 prwatch status            # the pull requests being watched; ● marks the ones that need you
 prwatch ack acme/app#42   # clear the ● once you have looked
 prwatch check acme/app#42 # ask the agent on that branch which review comments are still open
+prwatch start acme/app#42 # start Claude in your Orca checkout to report which review comments are resolved
 ```
 
 ### Pull requests you are reviewing

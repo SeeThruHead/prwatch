@@ -159,6 +159,12 @@ export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>) =>
       const deliver = (agent: AgentId, text: Text) =>
         isSessionAgent(agent) ? deliverToSession(agent, text) : fallback.deliver(agent, text)
 
-      return Host.of({ name: fallback.name, agents, deliver, notify: fallback.notify })
+      return Host.of({
+        name: fallback.name,
+        agents,
+        deliver,
+        notify: fallback.notify,
+        ...(fallback.start === undefined ? {} : { start: fallback.start })
+      })
     })
   )

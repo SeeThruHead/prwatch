@@ -4,7 +4,7 @@ import { Config, Console, Duration, Effect, Layer, Option, Schedule, Schema } fr
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
-import { PrKey, Text, agentId } from "../src/Brands.ts"
+import { PrKey, Text, Url, agentId, repoSlug } from "../src/Brands.ts"
 import { GitHub } from "../src/GitHub.ts"
 import { callerSession, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
@@ -12,7 +12,8 @@ import { HerdrHost } from "../src/hosts/Herdr.ts"
 import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
-import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
+import { Host } from "../src/Host.ts"
+import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS, startMessage } from "../src/Message.ts"
 import { Shell } from "../src/Shell.ts"
 import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
@@ -177,6 +178,20 @@ const check = Command.make(
     }).pipe(Effect.provide(watcherLayer(host)))
 ).pipe(Command.withDescription("ask the agent on this pull request's branch whether its review comments are resolved"))
 
+const start = Command.make("start", { pull: pullArgument, host: hostFlag, instructions }, ({ pull, host, instructions }) =>
+  Effect.gen(function* () {
+    const key = yield* pullKey(pull)
+    const hash = key.lastIndexOf("#")
+    const repo = repoSlug(key.slice(0, hash))
+    const url = Url.make(`https://github.com/${repo}/pull/${key.slice(hash + 1)}`)
+    const agents = yield* Host
+    if (agents.start === undefined) return yield* Console.log(`${agents.name} cannot start agents`)
+
+    const where = yield* agents.start(repo, startMessage(url, instructions))
+    yield* Console.log(`started ${where}`)
+  }).pipe(Effect.provide(withClaudeSessions(hostLayer(host)).pipe(Layer.provide(Shell.layer))))
+).pipe(Command.withDescription("start an agent that checks which review comments on this pull request are resolved"))
+
 const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))
 
 const callerPane = Effect.gen(function* () {
@@ -231,7 +246,7 @@ const claims = Command.make("claims", {}, () =>
 
 const prwatch = Command.make("prwatch").pipe(
   Command.withDescription("hand new reviews, comments and CI results on your pull requests to the coding agent on that branch"),
-  Command.withSubcommands([run, once, status, ack, check, claim, release, claims])
+  Command.withSubcommands([run, once, status, ack, check, start, claim, release, claims])
 )
 
 Command.run(prwatch, { version: pkg.version }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

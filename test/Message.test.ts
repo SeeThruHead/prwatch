@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
-import { Text } from "../src/Brands.ts"
-import { agentMessage, checkMessage } from "../src/Message.ts"
+import { Text, Url } from "../src/Brands.ts"
+import { agentMessage, checkMessage, startMessage } from "../src/Message.ts"
 import { item, pull } from "./fixtures.ts"
 
 describe("agentMessage", () => {
@@ -46,5 +46,17 @@ describe("checkMessage", () => {
 
   it("asks a reviewer's agent what the author has addressed", () => {
     expect(checkMessage(pull({ role: "reviewer" }), Text.make(""))).toContain("which the author has addressed")
+  })
+})
+
+describe("startMessage", () => {
+  it("links the pull request and asks which comments are resolved", () => {
+    const message = startMessage(Url.make("https://github.com/acme/app/pull/1"), Text.make("Show the user first."))
+
+    expect(message.split("\n")).toEqual([
+      "https://github.com/acme/app/pull/1",
+      "Make sure the review comments on this pull request have been resolved: read every thread with gh and report which have been resolved and which have not.",
+      "Show the user first."
+    ])
   })
 })
