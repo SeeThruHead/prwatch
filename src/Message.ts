@@ -1,4 +1,4 @@
-import { type FilePath, type LineNumber, type Markdown, Text } from "./Brands.ts"
+import { type FilePath, type LineNumber, type Markdown, Text, type Url } from "./Brands.ts"
 import type { Change } from "./Changes.ts"
 import type { PullRequest } from "./GitHub.ts"
 
@@ -52,6 +52,30 @@ const heading = (pull: PullRequest) =>
 
 export const agentMessage = (pull: PullRequest, changes: readonly Change[], instructions: Text) =>
   Text.make([heading(pull), ...changes.map((change) => `- ${describe(change)}`), instructions].join("\n"))
+
+const CHECK_ASKS = {
+  author:
+    "Read every review thread and comment with gh and tell the user which are resolved, which are still open, and what each open one needs.",
+  reviewer: "Read the user's review threads with gh and tell the user which the author has addressed and which are still open."
+} as const
+
+export const checkMessage = (pull: PullRequest, instructions: Text) =>
+  Text.make(
+    [
+      `[prwatch] the user asked you to check the comments on ${pull.key} "${pull.title}" (${pull.url}).`,
+      CHECK_ASKS[pull.role],
+      instructions
+    ].join("\n")
+  )
+
+export const START_PROMPT = Text.make(
+  "Make sure the review comments on this pull request have been resolved: read every thread with gh and report which have been resolved and which have not."
+)
+
+const CHECKOUT_RULE =
+  "If you need the pull request's code, use the existing worktree on its branch if there is one (git worktree list), otherwise create a new worktree for it. Never switch the branch of this checkout."
+
+export const startMessage = (url: Url, prompt: Text, instructions: Text) => Text.make([url, prompt, CHECKOUT_RULE, instructions].join("\n"))
 
 export const notification = (pull: PullRequest, changes: readonly Change[]) => ({
   title: Text.make(`${pull.key} ${pull.title}`),

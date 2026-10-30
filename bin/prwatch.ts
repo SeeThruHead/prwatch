@@ -4,7 +4,7 @@ import { Config, Console, Duration, Effect, Layer, Option, Schedule, Schema } fr
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
-import { PrKey, Text, agentId } from "../src/Brands.ts"
+import { PrKey, Text, Url, agentId, repoSlug } from "../src/Brands.ts"
 import { GitHub } from "../src/GitHub.ts"
 import { callerSession, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
@@ -12,7 +12,8 @@ import { HerdrHost } from "../src/hosts/Herdr.ts"
 import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
-import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
+import { Host } from "../src/Host.ts"
+import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS, START_PROMPT, startMessage } from "../src/Message.ts"
 import { Shell } from "../src/Shell.ts"
 import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
@@ -161,6 +162,48 @@ const ack = Command.make("ack", { pull: pullArgument }, ({ pull }) =>
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("mark a pull request as seen so it stops showing as needing you"))
 
+const check = Command.make(
+  "check",
+  { pull: pullArgument, host: hostFlag, dryRun, instructions, reviewInstructions },
+  ({ pull, host, dryRun, instructions, reviewInstructions }) =>
+    Effect.gen(function* () {
+      const key = yield* pullKey(pull)
+      const watcher = yield* Watcher
+      const agents = yield* watcher.check(key, { dryRun, instructions, reviewInstructions })
+
+      if (Option.isNone(agents)) return yield* Console.log(`${key} is not being watched`)
+      yield* Console.log(
+        agents.value.length === 0 ? "no agent on this branch" : `asked ${agents.value.map((agent) => agent.label).join(", ")}`
+      )
+    }).pipe(Effect.provide(watcherLayer(host)))
+).pipe(Command.withDescription("ask the agent on this pull request's branch whether its review comments are resolved"))
+
+const startPrompt = Flag.String("prompt").pipe(
+  Flag.withDescription(
+    "what the new agent is asked to do, after the pull request link; defaults to $PRWATCH_START_PROMPT, then a check of which review comments are resolved"
+  ),
+  Flag.withSchema(Text),
+  Flag.withDefault(Text.make(""))
+)
+
+const start = Command.make(
+  "start",
+  { pull: pullArgument, host: hostFlag, prompt: startPrompt, instructions },
+  ({ pull, host, prompt, instructions }) =>
+    Effect.gen(function* () {
+      const ask = prompt || Text.make(yield* Config.String("PRWATCH_START_PROMPT").pipe(Config.withDefault(START_PROMPT)))
+      const key = yield* pullKey(pull)
+      const hash = key.lastIndexOf("#")
+      const repo = repoSlug(key.slice(0, hash))
+      const url = Url.make(`https://github.com/${repo}/pull/${key.slice(hash + 1)}`)
+      const agents = yield* Host
+      if (agents.start === undefined) return yield* Console.log(`${agents.name} cannot start agents`)
+
+      const where = yield* agents.start(repo, startMessage(url, ask, instructions))
+      yield* Console.log(`started ${where}`)
+    }).pipe(Effect.provide(withClaudeSessions(hostLayer(host)).pipe(Layer.provide(Shell.layer))))
+).pipe(Command.withDescription("start an agent that checks which review comments on this pull request are resolved"))
+
 const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))
 
 const callerPane = Effect.gen(function* () {
@@ -215,7 +258,7 @@ const claims = Command.make("claims", {}, () =>
 
 const prwatch = Command.make("prwatch").pipe(
   Command.withDescription("hand new reviews, comments and CI results on your pull requests to the coding agent on that branch"),
-  Command.withSubcommands([run, once, status, ack, claim, release, claims])
+  Command.withSubcommands([run, once, status, ack, check, start, claim, release, claims])
 )
 
 Command.run(prwatch, { version: pkg.version }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

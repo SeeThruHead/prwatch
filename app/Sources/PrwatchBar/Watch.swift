@@ -9,6 +9,7 @@ final class Watch: ObservableObject {
   @Published private(set) var now = Date()
   @Published private(set) var watcherRunning = false
   @Published private(set) var cliLocation: String?
+  @Published private(set) var checks: [String: String] = [:]
   @Published private(set) var openAtLogin = SMAppService.mainApp.status == .enabled
 
   private var timer: Timer?
@@ -133,6 +134,34 @@ final class Watch: ObservableObject {
 
   func acknowledge(_ pull: Pull) {
     run("'\(helper)' ack '\(pull.key)'") { [weak self] in self?.reload() }
+  }
+
+  static let asking = "asking…"
+  static let noAgent = "no agent on this branch"
+
+  func check(_ pull: Pull) {
+    report(pull.key, "check")
+  }
+
+  func start(_ pull: Pull) {
+    report(pull.key, "start")
+  }
+
+  private func report(_ key: String, _ command: String) {
+    checks[key] = Self.asking
+    let process = login("'\(helper)' \(command) '\(key)' 2>&1")
+    let output = Pipe()
+    process.standardOutput = output
+    process.terminationHandler = { [weak self] _ in
+      let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      let last = text.split(whereSeparator: \.isNewline).last.map(String.init) ?? "could not ask"
+      Task { @MainActor in self?.checks[key] = last }
+    }
+    do {
+      try process.run()
+    } catch {
+      checks[key] = "could not ask"
+    }
   }
 
   func focus(_ pull: Pull) {

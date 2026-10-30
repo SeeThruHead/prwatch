@@ -15,7 +15,7 @@ Read each thread in full with gh before acting. Fix what bots raise yourself. Fo
 
 Download `prwatch-<version>-macos-arm64.zip` from the latest release, unzip it and move `prwatch.app` to Applications. The app is not notarized, so the first time, right-click it and choose Open (or run `xattr -dr com.apple.quarantine /Applications/prwatch.app`).
 
-The app is the whole thing. It runs the watcher in the background, shows a bell with the number of pull requests that need you, and lists each one with its latest update, the agent it went to, and buttons to open it, focus that agent's pane or mark it seen. From its menu:
+The app is the whole thing. It runs the watcher in the background, shows a bell with the number of pull requests that need you, and lists each one with its latest update, the agent it went to, and buttons to open it, focus that agent's pane or mark it seen. **Check comments** asks the agent on that branch which review comments are still open, and **Start agent** opens Claude in your Orca checkout to find out when no agent is on it (see `PRWATCH_START_PROMPT` below). From its menu:
 
 - **Open at login** starts it with your Mac.
 - **Install command line tool** links `prwatch` into `~/.local/bin`, so agents and you can run `prwatch claim`, `prwatch status` and the rest.
@@ -59,6 +59,8 @@ prwatch once --dry-run    # print what would be sent
 prwatch run               # see which pull requests changed every 10 seconds (--probe), fetch everything every 2 minutes (--interval)
 prwatch status            # the pull requests being watched; ● marks the ones that need you
 prwatch ack acme/app#42   # clear the ● once you have looked
+prwatch check acme/app#42 # ask the agent on that branch which review comments are still open
+prwatch start acme/app#42 # start Claude in your Orca checkout to report which review comments are resolved
 ```
 
 ### Pull requests you are reviewing
@@ -79,6 +81,8 @@ A claim ends by itself when the session or pane goes away or the pull request cl
 `--instructions "..."` and `--review-instructions "..."` replace the line appended to messages about your own pull requests and about ones you are reviewing.
 
 Notifications on herdr are silent. Set `PRWATCH_NOTIFY_SOUND` to `done` or `request` in your shell profile to hear one; the menu bar app starts the watcher through your login shell, so it picks the setting up on its next restart.
+
+Start agent (`prwatch start`) gives the new agent the pull request link and a prompt that asks which review comments are resolved. Set `PRWATCH_START_PROMPT` in your shell profile, or pass `--prompt`, to ask something else; the agent is always told to use a worktree for the pull request's code rather than switch the branch of your checkout.
 
 State lives in `~/.prwatch` (`PRWATCH_HOME` to change it): `seen.json` for what has already been delivered and `status.json` for tools such as a menu bar app.
 
