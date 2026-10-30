@@ -8,7 +8,11 @@ prwatch watches the user's open pull requests and types each new change into the
 
 ## Shipping
 
-`./build.sh <version>` compiles the CLI into one binary with `bun build --compile`, builds the Swift menu bar app in `app/`, and assembles `build/prwatch.app` with the CLI at `Contents/Helpers/prwatch`, plus a zip for the GitHub release. The app runs `Helpers/prwatch run` through the user's login shell and restarts it if it exits, links the CLI into `~/.local/bin` on request, and reads `status.json`. There is no npm or Homebrew package.
+`./build.sh <version>` compiles the CLI into one binary with `bun build --compile`, builds the Swift menu bar app in `app/`, and assembles `build/prwatch.app` with the CLI at `Contents/Helpers/prwatch`, plus a zip for the GitHub release. The app runs `Helpers/prwatch run` through the user's login shell and restarts it if it exits, links the CLI into `~/.local/bin` on request, and reads `status.json`. Releases are the zip on GitHub, which the `seethruhead/tap` Homebrew formula installs. There is no npm package.
+
+## Updates
+
+The app checks GitHub's latest release at launch and every 6 hours (`app/Sources/PrwatchBar/Update.swift`). When it's newer than the app's own version, an **Update x.y.z** button appears next to Quit. Clicking it hands off to a small script and quits; the script waits for the app to exit, installs the new version and reopens it. An app running from a Homebrew Cellar is upgraded with `brew upgrade seethruhead/tap/prwatch` and reopened from its `opt` path. Any other copy is replaced in place from the release zip, and a failed download or copy keeps the old app. The version shows next to the title.
 
 ## How it starts
 
