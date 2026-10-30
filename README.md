@@ -80,7 +80,59 @@ A claim ends by itself when the session or pane goes away or the pull request cl
 
 Notifications on herdr are silent. Set `PRWATCH_NOTIFY_SOUND` to `done` or `request` in your shell profile to hear one; the menu bar app starts the watcher through your login shell, so it picks the setting up on its next restart.
 
-State lives in `~/.prwatch` (`PRWATCH_HOME` to change it): `seen.json` for what has already been delivered and `status.json` for tools such as a menu bar app.
+### Runs, deployments and releases
+
+Pull requests are not the only thing worth hearing about. A deploy you started finishes long after the pull request closed, and a preview dispatched from a portal belongs to a pull request without being a check on it. Watch rules tell prwatch which of these to follow and whose they are. With no rules, nothing changes.
+
+Rules live in `config.json` and `config.local.json` in `~/.config/prwatch` (`PRWATCH_CONFIG_DIR` to change it). Keep `config.json` where your dotfiles are tracked and `config.local.json` for one machine; a rule in the local file replaces the shared rule with the same name. A rule applies only on machines whose name matches `machines` (`PRWATCH_MACHINE`, default the hostname).
+
+```json
+{
+  "rules": [
+    {
+      "name": "main deploys",
+      "repos": ["acme/*"],
+      "events": ["push"],
+      "branches": ["main"],
+      "link": "merge-commit",
+      "notify": { "on": ["failed", "succeeded"], "to": ["pane", "menubar"] }
+    },
+    {
+      "name": "previews",
+      "repos": ["acme/shop"],
+      "workflows": ["*Preview*"],
+      "link": "pr-head-sha"
+    },
+    {
+      "name": "tagged releases",
+      "source": "release",
+      "repos": ["acme/*"],
+      "where": [{ "field": "tag_name", "regex": "^v\\d+\\.\\d+\\.\\d+$" }],
+      "link": "actor"
+    }
+  ]
+}
+```
+
+- **`source`** is what to watch: `workflow_run` (the default), `check_run`, `commit_status`, `deployment` or `release`. Check runs and statuses are read for your open pull requests and the latest commits on each repository.
+- **`repos`** are `owner/name` globs. The owner must be literal, so `acme/*` works and `*/shop` does not.
+- **`events`, `workflows`, `branches`, `environments`** are shortcuts for the common fields of each source. `where` matches any field of the GitHub payload: `{ "field": "app.slug", "in": ["ci"] }`, `{ "field": "head_branch", "glob": "release/*" }`, `{ "field": "display_title", "regex": "#(\\d+)" }` or `{ "field": "pull_requests.number", "exists": true }`. A field inside an array matches if any element does. Globs ignore case.
+- **`link`** decides whose it is. `actor`: you started it. `merge-commit`: it built the merge commit of a pull request you opened. `pr-head-sha`: it ran on the head commit of one of your open pull requests. `claim`: any pull request that matches the commit, delivered only to panes that claimed it. `any`: everything that matches. Or `{ "extract": { "from": "head_branch", "regex": "^pr-(\\d+)$", "as": "pr-number" } }` to read a pull request number, a `branch` or a `sha` out of a field.
+- **`notify`** says which `on` outcomes (`started`, `succeeded`, `failed`, `cancelled`, `completed` for any finished outcome) go `to` the agent's `pane`, the `menubar` and a desktop notification, or both. The default is failed and succeeded to the pane. A pane is chosen the way it is for pull requests: the ones that claimed the pull request or the run, and the worktree on the run's branch.
+- **`command`** is a shell command that gets the run as JSON on stdin and answers `{ "linked": true, "pr": "acme/shop#7", "message": "rolled back" }` or `{ "linked": false }`, so a repository with its own conventions never needs a change to prwatch.
+
+The first time rules exist, prwatch records the time and reports only runs that change after that. A run that is still going is followed until it finishes. Runs are checked every `--runs-interval` seconds (default 30) and nothing older than a day is read. When every rule for a repository links by `actor`, prwatch asks GitHub only for your runs.
+
+```sh
+prwatch config path       # where rules are read from, and this machine's name
+prwatch config show       # every rule and the file it came from (--json for tools)
+prwatch config test https://github.com/acme/shop/actions/runs/123   # which rules match that run, and whether it would reach you
+prwatch watch-run https://github.com/acme/shop/actions/runs/123     # tell this pane when that run finishes, whoever started it
+```
+
+The menu bar app lists recent runs next to your pull requests, and **Rules…** opens the rules in effect with a button to edit each file.
+
+State lives in `~/.prwatch` (`PRWATCH_HOME` to change it): `seen.json` for what has already been delivered, `runs.json` for the runs being followed and `status.json` for tools such as a menu bar app.
 
 ## Development
 

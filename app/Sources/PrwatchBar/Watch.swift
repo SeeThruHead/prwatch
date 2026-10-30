@@ -43,7 +43,10 @@ final class Watch: ObservableObject {
 
   var others: [Pull] { status?.pulls.filter { !$0.needsYou && $0.last != nil } ?? [] }
 
+  var runs: [RunEntry] { status?.runs ?? [] }
+
   var helper: String {
+    if let override = ProcessInfo.processInfo.environment["PRWATCH_HELPER"] { return override }
     let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/prwatch").path
     return FileManager.default.isExecutableFile(atPath: bundled) ? bundled : "prwatch"
   }
@@ -128,6 +131,44 @@ final class Watch: ObservableObject {
 
   func open(_ pull: Pull) {
     guard let url = URL(string: pull.url) else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  func open(_ run: RunEntry) {
+    guard let url = URL(string: run.url) else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  func loadConfig(_ done: @escaping @MainActor (ConfigSnapshot?) -> Void) {
+    let process = login("'\(helper)' config show --json")
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.terminationHandler = { _ in
+      let output = pipe.fileHandleForReading.readDataToEndOfFile()
+      let start = output.firstIndex(of: UInt8(ascii: "{")) ?? output.startIndex
+      let snapshot = try? JSONDecoder().decode(ConfigSnapshot.self, from: output[start...])
+      Task { @MainActor in done(snapshot) }
+    }
+    do {
+      try process.run()
+    } catch {
+      done(nil)
+    }
+  }
+
+  func edit(_ file: ConfigFile, then: @escaping @MainActor () -> Void) {
+    let url = URL(fileURLWithPath: file.path)
+    if !file.exists {
+      try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? Data("{\n  \"rules\": []\n}\n".utf8).write(to: url)
+    }
+    NSWorkspace.shared.open(url)
+    then()
+  }
+
+  func reveal(_ directory: String) {
+    let url = URL(fileURLWithPath: directory)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     NSWorkspace.shared.open(url)
   }
 

@@ -61,7 +61,7 @@ export class RulesConfig extends Context.Service<
         if (reasons.length > 0) return yield* new RulesInvalid({ reasons })
 
         return located
-      })
+      }).pipe(Effect.withSpan("RulesConfig.load"))
 
       return RulesConfig.of({ dir, machine, files, load })
     })

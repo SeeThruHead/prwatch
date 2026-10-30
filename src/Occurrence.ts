@@ -207,7 +207,8 @@ const ReleaseFields = Schema.Struct({
 export const release = (repo: RepoSlug, raw: Raw): Option.Option<Occurrence> =>
   Option.flatMap(Schema.decodeUnknownOption(ReleaseFields)(raw), (found) => {
     const pending = pendingOf("release", repo, Text.make(String(found.id)))
-    if (found.draft || found.published_at === null) return Option.none()
+    if (found.draft) return Option.none()
+    if (found.published_at === null) return Option.none()
 
     return Option.some<Occurrence>({
       key: pending.key,

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Config, Console, Duration, Effect, Layer, Option, Schedule, Schema } from "effect"
+import { Config, Console, Duration, Effect, FileSystem, Layer, Option, Schedule, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
 import { PrKey, Text, agentId } from "../src/Brands.ts"
 import { Activity } from "../src/Activity.ts"
 import { RulesConfig } from "../src/Config.ts"
+import { describeRule } from "../src/Describe.ts"
 import { RunWatcher } from "../src/Runs.ts"
 import { Pending } from "../src/RunState.ts"
 import { GitHub } from "../src/GitHub.ts"
@@ -276,13 +277,29 @@ const configPath = Command.make("path", {}, () =>
   }).pipe(Effect.provide(RulesConfig.layer))
 ).pipe(Command.withDescription("show where watch rules are read from and the machine name rules match against"))
 
-const configShow = Command.make("show", {}, () =>
+const configShow = Command.make("show", { json: Flag.Boolean("json").pipe(Flag.withDefault(false)) }, ({ json }) =>
   Effect.gen(function* () {
     const config = yield* RulesConfig
+    if (json) {
+      const fs = yield* FileSystem.FileSystem
+      const files = yield* Effect.forEach(config.files, (path) =>
+        Effect.map(
+          Effect.orElseSucceed(fs.exists(path), () => false),
+          (exists) => ({ path, exists })
+        )
+      )
+      const loaded = yield* Effect.match(config.load, {
+        onFailure: (error) => ({ rules: [], error: error.message }),
+        onSuccess: (located) => ({ rules: located.map(({ rule, file }) => ({ file, rule, summary: describeRule(rule) })) })
+      })
+
+      return yield* Console.log(JSON.stringify({ directory: config.dir, machine: config.machine, files, ...loaded }, null, 2))
+    }
+
     const located = yield* config.load
     if (located.length === 0) return yield* Console.log(`no watch rules; put them in ${config.files.join(" or ")}`)
 
-    yield* Effect.forEach(located, ({ rule, file }) => Console.log(`${rule.name}  (${file})\n  ${JSON.stringify(rule)}`), { discard: true })
+    yield* Effect.forEach(located, ({ rule, file }) => Console.log(`${rule.name}  (${file})\n  ${describeRule(rule)}`), { discard: true })
   }).pipe(Effect.provide(RulesConfig.layer))
 ).pipe(Command.withDescription("list the watch rules in effect and the file each comes from"))
 
