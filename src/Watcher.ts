@@ -3,8 +3,22 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Sch
 import { type Change, type Seen, changesSince, needsYou, snapshotOf } from "./Changes.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
-import { type Branch, Count, type HostName, type IsoTime, type RepoSlug, type Sha, Text, isoTime, sameRepo } from "./Brands.ts"
-import { agentMessage, notification, summary } from "./Message.ts"
+import {
+  type AgentId,
+  type Branch,
+  Count,
+  type HostName,
+  type IsoTime,
+  type RepoSlug,
+  type RunKey,
+  type Sha,
+  Text,
+  isoTime,
+  sameRepo
+} from "./Brands.ts"
+import { RUN_INSTRUCTIONS, agentMessage, notification, runMessage, runNotification, summary } from "./Message.ts"
+import { type RunDelivery, RunWatcher } from "./Runs.ts"
+import type { StatusRun } from "./RunState.ts"
 import { type Claims, type Status, type StatusPull, Store } from "./Store.ts"
 import { Workspace } from "./Workspace.ts"
 
@@ -45,6 +59,27 @@ export const recipients = (pull: PullRequest, found: Found, claims: Claims): rea
   const byWorktree = found.placed.filter(onBranch(pull)).filter((agent) => !isClaimed(agent))
 
   return [...byClaim, ...byWorktree].filter(reachable)
+}
+
+const claimantsOf = (delivery: RunDelivery, claims: Claims): readonly AgentId[] => [
+  ...delivery.watchers,
+  ...Option.match(delivery.linked.pr, { onNone: () => [], onSome: (key) => (claims[key] ?? []).map((claim) => claim.agent) })
+]
+
+const onRun = (delivery: RunDelivery) => (agent: Placed) => {
+  if (!sameRepo(agent.repo, delivery.occurrence.repo)) return false
+  if (Option.isNone(agent.branch)) return agent.commit === delivery.linked.sha
+
+  return Option.exists(delivery.linked.branch, (name) => Option.exists(agent.branch, (own) => own === name))
+}
+
+export const runRecipients = (delivery: RunDelivery, found: Found, claims: Claims): readonly Agent[] => {
+  const claimed = new Set<AgentId>(claimantsOf(delivery, claims))
+  const isClaimed = (agent: Agent) => answersTo(agent).some((id) => claimed.has(id))
+  const byClaim = found.agents.filter(isClaimed)
+  if (delivery.linked.claimantsOnly) return byClaim.filter(reachable)
+
+  return [...byClaim, ...found.placed.filter(onRun(delivery)).filter((agent) => !isClaimed(agent))].filter(reachable)
 }
 
 const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Found, claims: Claims): readonly Delivery[] =>
@@ -94,6 +129,7 @@ const nextStatus = (
 ): Status => ({
   updatedAt: at,
   host,
+  ...(previous?.runs === undefined ? {} : { runs: previous.runs }),
   pulls: pulls.map((pull) => {
     const before = previous?.pulls.find((entry) => entry.key === pull.key)
     const delivery = deliveries.find((entry) => entry.pull.key === pull.key)
@@ -112,6 +148,8 @@ const nextStatus = (
     }
   })
 })
+
+const MAX_RUNS = 20
 
 export type Synced = { readonly at: DateTime.Utc; readonly stamps: readonly Stamp[]; readonly pulls: readonly PullRequest[] }
 
@@ -133,8 +171,12 @@ type Options = { readonly dryRun: boolean; readonly instructions: Text; readonly
 export class Watcher extends Context.Service<
   Watcher,
   {
-    readonly cycle: (options: Options) => Effect.Effect<readonly Delivery[], unknown>
-    readonly watch: (options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration }) => Effect.Effect<never>
+    readonly cycle: (
+      options: Options
+    ) => Effect.Effect<{ readonly pulls: readonly Delivery[]; readonly runs: readonly RunDelivery[] }, unknown>
+    readonly watch: (
+      options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration; readonly runsEvery: Duration.Duration }
+    ) => Effect.Effect<never>
   }
 >()("prwatch/Watcher") {
   static readonly layer = Layer.effect(
@@ -144,6 +186,7 @@ export class Watcher extends Context.Service<
       const host = yield* Host
       const workspace = yield* Workspace
       const store = yield* Store
+      const runWatcher = yield* RunWatcher
 
       const placed = Effect.fn("Watcher.placed")(function* () {
         const agents = yield* host.agents.pipe(
@@ -208,10 +251,74 @@ export class Watcher extends Context.Service<
         return deliveries
       })
 
+      const sendRun = Effect.fn("Watcher.sendRun")(function* (delivery: RunDelivery, found: Found, claims: Claims, options: Options) {
+        const agents = delivery.targets.includes("pane") ? runRecipients(delivery, found, claims) : []
+        const message = runMessage(delivery.occurrence, delivery.linked.pr, delivery.message, RUN_INSTRUCTIONS)
+        const { title, body } = runNotification(delivery.occurrence)
+        const alert = delivery.targets.includes("menubar")
+
+        if (options.dryRun)
+          return yield* Effect.log(
+            `[dry run] to ${agents.map((agent) => agent.label).join(", ") || "nobody"}${alert ? " + notify" : ""}\n${message}`
+          )
+
+        yield* Effect.forEach(
+          agents,
+          (agent) =>
+            host.deliver(agent.id, message).pipe(
+              Effect.tapError((error) => Effect.logWarning(error.message)),
+              Effect.ignore
+            ),
+          { discard: true }
+        )
+        if (alert) yield* host.notify(title, body)
+      })
+
+      const recordRuns = Effect.fn("Watcher.recordRuns")(function* (recent: readonly StatusRun[]) {
+        if (recent.length === 0) return
+
+        const previous = yield* store.status
+        const at = isoTime(yield* DateTime.now)
+        const base: Status = previous ?? { updatedAt: at, host: host.name, pulls: [] }
+        const keys = new Set<RunKey>(recent.map((run) => run.key))
+        const runs = [...recent, ...(base.runs ?? []).filter((run) => !keys.has(run.key))].slice(0, MAX_RUNS)
+
+        yield* store.saveStatus({ ...base, runs }).pipe(
+          Effect.tapError((error) => Effect.logWarning(error.message)),
+          Effect.ignore
+        )
+      })
+
+      const dispatchRuns = Effect.fn("Watcher.dispatchRuns")(function* (options: Options) {
+        const { deliveries, recent } = yield* runWatcher.collect({ dryRun: options.dryRun })
+        if (deliveries.length === 0) return deliveries
+
+        const [found, claims] = yield* Effect.all([placed(), store.claims], { concurrency: 2 })
+        yield* Effect.forEach(deliveries, (delivery) => sendRun(delivery, found, claims, options), { discard: true })
+        if (!options.dryRun) yield* recordRuns(recent)
+
+        return deliveries
+      })
+
       const cycle = Effect.fn("Watcher.cycle")(function* (options: Options) {
         const { pulls } = yield* github.pullRequests
+        const delivered = yield* dispatch(pulls, options)
+        const runs = yield* dispatchRuns(options)
 
-        return yield* dispatch(pulls, options)
+        return { pulls: delivered, runs }
+      })
+
+      const runsDue = Effect.fn("Watcher.runsDue")(function* (
+        lastRuns: Ref.Ref<DateTime.Utc | undefined>,
+        every: Duration.Duration,
+        options: Options
+      ) {
+        const now = yield* DateTime.now
+        const last = yield* Ref.get(lastRuns)
+        if (last !== undefined && Duration.isLessThan(DateTime.distance(last, now), every)) return
+
+        yield* Ref.set(lastRuns, now)
+        yield* dispatchRuns(options)
       })
 
       const tick = Effect.fn("Watcher.tick")(function* (state: Ref.Ref<Synced | undefined>, options: Options, interval: Duration.Duration) {
@@ -245,12 +352,21 @@ export class Watcher extends Context.Service<
           yield* store.saveStatus({ updatedAt: at, host: host.name, error: message, pulls: previous?.pulls ?? [] }).pipe(Effect.ignore)
         })
 
-      const watch = (options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration }) =>
-        Effect.flatMap(Ref.make<Synced | undefined>(undefined), (state) =>
-          tick(state, options, options.interval).pipe(
-            Effect.catch(recordFailure),
-            Effect.repeat(Schedule.spaced(options.probe)),
-            Effect.andThen(Effect.never)
+      const watch = (
+        options: Options & {
+          readonly interval: Duration.Duration
+          readonly probe: Duration.Duration
+          readonly runsEvery: Duration.Duration
+        }
+      ) =>
+        Effect.all([Ref.make<Synced | undefined>(undefined), Ref.make<DateTime.Utc | undefined>(undefined)]).pipe(
+          Effect.flatMap(([state, lastRuns]) =>
+            tick(state, options, options.interval).pipe(
+              Effect.andThen(runsDue(lastRuns, options.runsEvery, options)),
+              Effect.catch(recordFailure),
+              Effect.repeat(Schedule.spaced(options.probe)),
+              Effect.andThen(Effect.never)
+            )
           )
         )
 
