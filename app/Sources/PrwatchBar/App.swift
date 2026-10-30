@@ -59,6 +59,13 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }()
   private var item: NSStatusItem?
   private var subscription: AnyCancellable?
+  private var closedAt = Date.distantPast
+
+  // A transient popover closes on the mouse-down of a click on the status
+  // item, then the button action fires on mouse-up and would reopen it.
+  private var closedByThisClick: Bool {
+    Date().timeIntervalSince(closedAt) < 0.3
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -103,6 +110,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
       popover.performClose(nil)
       return
     }
+    if closedByThisClick { return }
     guard let buttonWindow = button.window else { return }
     watch.reload()
     anchor.setFrame(buttonWindow.convertToScreen(button.convert(button.bounds, to: nil)), display: false)
@@ -113,6 +121,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
 
   func popoverDidClose(_ notification: Notification) {
+    closedAt = Date()
     anchor.orderOut(nil)
   }
 }
