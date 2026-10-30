@@ -81,7 +81,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.animates = false
     popover.delegate = self
 
-    subscription = watch.objectWillChange.sink { [weak self] _ in
+    subscription = watch.objectWillChange.merge(with: updater.objectWillChange).sink { [weak self] _ in
       DispatchQueue.main.async { self?.refreshButton() }
     }
     refreshButton()
@@ -100,8 +100,30 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
     case .missing, .stale: symbol = "bell.slash"
     case .live: symbol = waiting > 0 ? "bell.badge.fill" : "bell"
     }
-    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "prwatch")
+    let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "prwatch")
+    button.image = updater.available == nil ? image : image.map(Self.markedForUpdate)
     button.title = waiting > 0 ? " \(waiting)" : ""
+    button.toolTip = updater.available.map { "prwatch \($0) is available" }
+  }
+
+  // Stays a template image so the menu bar still tints it; the arrow sits in a gap cut out of the bell.
+  private static func markedForUpdate(_ base: NSImage) -> NSImage {
+    guard
+      let mark = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: "update available")?
+        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+    else { return base }
+    let size = NSSize(width: base.size.width + mark.size.width / 2, height: base.size.height)
+    let image = NSImage(size: size, flipped: false) { _ in
+      base.draw(in: NSRect(origin: .zero, size: base.size))
+      let markRect = NSRect(x: size.width - mark.size.width, y: 0, width: mark.size.width, height: mark.size.height)
+      NSGraphicsContext.current?.compositingOperation = .clear
+      NSBezierPath(ovalIn: markRect.insetBy(dx: -1.5, dy: -1.5)).fill()
+      NSGraphicsContext.current?.compositingOperation = .sourceOver
+      mark.draw(in: markRect)
+      return true
+    }
+    image.isTemplate = true
+    return image
   }
 
   @objc private func toggle() {
