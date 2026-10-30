@@ -61,7 +61,13 @@ export const CmuxHost = Layer.effect(
       if (agent === undefined || cwd === undefined) return []
 
       return [
-        { id: workspace.id, cwd: FilePath.make(cwd), label: Text.make(`${agent.key} in cmux "${workspace.title}"`), status: agent.status }
+        {
+          id: workspace.id,
+          cwd: FilePath.make(cwd),
+          program: Text.make(agent.key),
+          label: Text.make(`${agent.key} in cmux "${workspace.title}"`),
+          status: agent.status
+        }
       ]
     })
 

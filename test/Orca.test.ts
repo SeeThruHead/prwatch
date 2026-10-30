@@ -15,7 +15,7 @@ const claude = Text.make("claude")
 describe("orca terminals", () => {
   it("keeps connected, writable terminals running an agent, at their worktree", () => {
     expect(agentsOf([{ ...terminal, agentIdentity: claude }])).toEqual([
-      { id: "term_1", cwd: "/work/app", label: 'claude in orca "Claude Code"', status: "unknown" }
+      { id: "term_1", cwd: "/work/app", program: "claude", label: 'claude in orca "Claude Code"', status: "unknown" }
     ])
   })
 

@@ -36,6 +36,7 @@ export const TmuxHost = Layer.effect(
           .map((pane) => ({
             id: agentId(pane.id),
             cwd: FilePath.make(pane.cwd),
+            program: Text.make(pane.command),
             label: Text.make(`${pane.command} in ${pane.where}`),
             status: "unknown" as const
           }))

@@ -57,7 +57,7 @@ export type Fingerprint = typeof Fingerprint.Type
 export const Stdout = Schema.String.pipe(Schema.brand("Stdout"))
 export type Stdout = typeof Stdout.Type
 
-export const HostName = Schema.Literals(["herdr", "cmux", "orca", "tmux"])
+export const HostName = Schema.Literals(["herdr", "cmux", "orca", "tmux", "claude"])
 export type HostName = typeof HostName.Type
 
 export const NotifySound = Schema.Literals(["none", "done", "request"])

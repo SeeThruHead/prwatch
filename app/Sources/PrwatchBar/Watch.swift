@@ -136,7 +136,7 @@ final class Watch: ObservableObject {
   }
 
   func focus(_ pull: Pull) {
-    guard let agentId = pull.agentId, status?.host == "herdr" else { return }
+    guard let agentId = pull.agentId, status?.host == "herdr", !agentId.hasPrefix("claude:") else { return }
     run("herdr agent focus '\(agentId)'")
   }
 

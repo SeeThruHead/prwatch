@@ -32,6 +32,12 @@ pnpm install
 node bin/prwatch.ts run
 ```
 
+## Claude Code sessions
+
+When a Claude Code session is working on a pull request's branch, prwatch messages that session directly instead of typing into its terminal. It finds sessions with `claude agents --json` and posts to each session's inbox socket, the one Claude Code uses for [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging). The message arrives in the session like one from another session, between tool calls or as a new turn when it is idle. Nothing is typed into a terminal, so it can't land in the wrong window, and it works wherever the session runs: herdr, cmux, Orca, tmux, a plain terminal or a background session. Agents that aren't Claude Code sessions still go through the multiplexer below.
+
+A session that bypasses permission prompts holds a message from outside Claude Code for your approval. To let prwatch's messages through without a prompt each time, set `"crossSessionInbound": "accept"` in `~/.claude/settings.json`. That accepts messages from your other local sessions too.
+
 ## Multiplexers
 
 | Host  | Finds agents by                                                                                                                                             | Delivers with               | Notifies with             |
@@ -62,13 +68,13 @@ prwatch also watches open pull requests you have commented on or reviewed but di
 An agent gets a pull request's updates when its working directory is that repository on the pull request's branch, on a `pr-<number>` branch, or detached at one of its commits. An agent that reviews many pull requests from one directory claims them instead:
 
 ```sh
-prwatch claim acme/app#42      # from inside the agent's pane; uses $HERDR_PANE_ID or $TMUX_PANE
+prwatch claim acme/app#42      # from inside the agent; a Claude Code session claims itself, otherwise $HERDR_PANE_ID or $TMUX_PANE
 prwatch claim https://github.com/acme/app/pull/42 --agent w1:p3
 prwatch release acme/app#42
 prwatch claims
 ```
 
-A claim ends by itself when the pane goes away or the pull request closes.
+A claim ends by itself when the session or pane goes away or the pull request closes.
 
 `--instructions "..."` and `--review-instructions "..."` replace the line appended to messages about your own pull requests and about ones you are reviewing.
 
