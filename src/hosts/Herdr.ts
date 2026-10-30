@@ -1,7 +1,7 @@
-import { Effect, Layer, Schema } from "effect"
+import { Config, Effect, Layer, Schema } from "effect"
 
 import { DeliveryFailed, Host, HostUnavailable } from "../Host.ts"
-import { AgentId, FilePath, Text } from "../Brands.ts"
+import { AgentId, FilePath, NotifySound, Text } from "../Brands.ts"
 import { Shell } from "../Shell.ts"
 
 const HerdrStatus = Schema.String.pipe(Schema.brand("HerdrStatus"))
@@ -30,10 +30,13 @@ const statusOf = (status: typeof HerdrStatus.Type) => {
 
 const NAME = "herdr" as const
 
+export const notifyArgs = (title: Text, body: Text, sound: NotifySound) => ["notification", "show", title, "--body", body, "--sound", sound]
+
 export const HerdrHost = Layer.effect(
   Host,
   Effect.gen(function* () {
     const shell = yield* Shell
+    const sound = yield* Config.Literals(NotifySound.literals, "PRWATCH_NOTIFY_SOUND").pipe(Config.withDefault("none"))
 
     const agents = shell.run("herdr", ["agent", "list"]).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(AgentList))),
@@ -58,7 +61,7 @@ export const HerdrHost = Layer.effect(
     })
 
     const notify = Effect.fn("HerdrHost.notify")(function* (title: Text, body: Text) {
-      yield* shell.run("herdr", ["notification", "show", title, "--body", body, "--sound", "request"]).pipe(Effect.ignore)
+      yield* shell.run("herdr", notifyArgs(title, body, sound)).pipe(Effect.ignore)
     })
 
     return Host.of({ name: NAME, agents, deliver, notify })

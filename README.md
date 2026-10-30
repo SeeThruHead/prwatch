@@ -71,6 +71,8 @@ A claim ends by itself when the pane goes away or the pull request closes.
 
 `--instructions "..."` and `--review-instructions "..."` replace the line appended to messages about your own pull requests and about ones you are reviewing.
 
+Notifications on herdr are silent. Set `PRWATCH_NOTIFY_SOUND` to `done` or `request` in your shell profile to hear one; the menu bar app starts the watcher through your login shell, so it picks the setting up on its next restart.
+
 State lives in `~/.prwatch` (`PRWATCH_HOME` to change it): `seen.json` for what has already been delivered and `status.json` for tools such as a menu bar app.
 
 ## Development

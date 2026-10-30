@@ -60,6 +60,9 @@ export type Stdout = typeof Stdout.Type
 export const HostName = Schema.Literals(["herdr", "cmux", "orca", "tmux"])
 export type HostName = typeof HostName.Type
 
+export const NotifySound = Schema.Literals(["none", "done", "request"])
+export type NotifySound = typeof NotifySound.Type
+
 export const ReviewDecision = Schema.Literals(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"])
 export type ReviewDecision = typeof ReviewDecision.Type
 
