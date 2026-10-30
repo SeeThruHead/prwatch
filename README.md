@@ -15,7 +15,7 @@ Read each thread in full with gh before acting. Fix what bots raise yourself. Fo
 
 Download `prwatch-<version>-macos-arm64.zip` from the latest release, unzip it and move `prwatch.app` to Applications. The app is not notarized, so the first time, right-click it and choose Open (or run `xattr -dr com.apple.quarantine /Applications/prwatch.app`).
 
-The app is the whole thing. It runs the watcher in the background, shows a bell with the number of pull requests that need you, and lists each one with its latest update, the agent it went to, and buttons to open it, focus that agent's pane or mark it seen. From its menu:
+The app is the whole thing. It runs the watcher in the background, shows a bell with the number of pull requests that need you, and lists each one with its latest update, the agent it went to, and buttons to open it, focus that agent's pane or mark it seen. **Check comments** asks the agent on that branch which review comments are still open, and **Start agent** opens Claude in your Orca checkout to find out when no agent is on it (see `PRWATCH_START_PROMPT` below). From its menu:
 
 - **Open at login** starts it with your Mac.
 - **Install command line tool** links `prwatch` into `~/.local/bin`, so agents and you can run `prwatch claim`, `prwatch status` and the rest.
