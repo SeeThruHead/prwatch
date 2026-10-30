@@ -16,6 +16,12 @@ describe("recipients", () => {
     expect(recipients(pull(), { agents: [reviewer, worktree], placed }, claims).map((agent) => agent.id)).toEqual(["w1:p9", "w2:p1"])
   })
 
+  it("sends to a session that replaced the claiming pane, and keeps that claim alive", () => {
+    const session: Agent = { ...reviewer, id: agentId("claude:s-1"), aliases: [agentId("w1:p9")] }
+    expect(recipients(pull(), { agents: [session, worktree], placed }, claims).map((agent) => agent.id)).toEqual(["claude:s-1", "w2:p1"])
+    expect(liveClaims(claims, [pull()], [session])).toEqual(claims)
+  })
+
   it("skips a claiming pane that is blocked on a question", () => {
     const blocked = { ...reviewer, status: "blocked" as const }
     expect(recipients(pull(), { agents: [blocked, worktree], placed }, claims).map((agent) => agent.id)).toEqual(["w2:p1"])
