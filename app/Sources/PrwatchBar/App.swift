@@ -19,7 +19,12 @@ enum PrwatchBar {
   }
 
   @MainActor private static func snapshot(to file: URL) {
-    let view = NSHostingView(rootView: MenuContent(watch: Watch()).background(Color(nsColor: .windowBackgroundColor)))
+    let updater = Updater()
+    let deadline = Date().addingTimeInterval(5)
+    while !updater.checked && Date() < deadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+    let view = NSHostingView(rootView: MenuContent(watch: Watch(), updater: updater).background(Color(nsColor: .windowBackgroundColor)))
     view.appearance = NSAppearance(named: .darkAqua)
     view.frame = NSRect(origin: .zero, size: view.fittingSize)
     let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -40,6 +45,7 @@ enum PrwatchBar {
 @MainActor
 final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
   private let watch = Watch()
+  private let updater = Updater()
   private let popover = NSPopover()
   private lazy var anchor: NSWindow = {
     let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
@@ -61,7 +67,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
     item.button?.imagePosition = .imageLeading
     self.item = item
 
-    let host = NSHostingController(rootView: MenuContent(watch: watch))
+    let host = NSHostingController(rootView: MenuContent(watch: watch, updater: updater))
     host.sizingOptions = .preferredContentSize
     popover.contentViewController = host
     popover.behavior = .transient
@@ -283,6 +289,7 @@ struct Stat: View {
 
 struct MenuContent: View {
   @ObservedObject var watch: Watch
+  @ObservedObject var updater: Updater
   @State private var listHeight: CGFloat = 0
 
   private var pulls: [Pull] { watch.status?.pulls ?? [] }
@@ -312,6 +319,7 @@ struct MenuContent: View {
     HStack(spacing: 14) {
       Image(systemName: watch.watcherRunning && watch.freshness == .live ? "bell.fill" : "bell.slash")
       Text("prwatch").font(.system(size: 14, weight: .bold))
+      Text(updater.current).font(.system(size: 11)).foregroundStyle(.secondary)
       Spacer()
       Stat(symbol: "circle.fill", value: watch.waiting.count, color: .orange, help: "Need you")
       Stat(symbol: "arrow.triangle.merge", value: pulls.filter(\.ready).count, color: .green, help: "Ready to merge")
@@ -332,6 +340,9 @@ struct MenuContent: View {
         Button("Install CLI") { watch.installCli() }.buttonStyle(.link).font(.system(size: 11))
       }
       Spacer()
+      if let version = updater.available {
+        Button("Update \(version)") { updater.update() }.disabled(updater.updating)
+      }
       Button("Quit") { NSApp.terminate(nil) }
     }
   }

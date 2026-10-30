@@ -19,6 +19,7 @@ The app is the whole thing. It runs the watcher in the background, shows a bell 
 
 - **Open at login** starts it with your Mac.
 - **Install command line tool** links `prwatch` into `~/.local/bin`, so agents and you can run `prwatch claim`, `prwatch status` and the rest.
+- **Update x.y.z** appears next to Quit when a newer release is out. Click it and prwatch quits, installs the new version (through Homebrew if that's how you installed it), and reopens.
 
 It needs the [GitHub CLI](https://cli.github.com) logged in (`gh auth status`) and your agents running in a supported multiplexer. The watcher runs through your login shell, so it sees the same `PATH` you do.
 
