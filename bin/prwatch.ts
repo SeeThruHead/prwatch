@@ -161,6 +161,22 @@ const ack = Command.make("ack", { pull: pullArgument }, ({ pull }) =>
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("mark a pull request as seen so it stops showing as needing you"))
 
+const check = Command.make(
+  "check",
+  { pull: pullArgument, host: hostFlag, dryRun, instructions, reviewInstructions },
+  ({ pull, host, dryRun, instructions, reviewInstructions }) =>
+    Effect.gen(function* () {
+      const key = yield* pullKey(pull)
+      const watcher = yield* Watcher
+      const agents = yield* watcher.check(key, { dryRun, instructions, reviewInstructions })
+
+      if (Option.isNone(agents)) return yield* Console.log(`${key} is not being watched`)
+      yield* Console.log(
+        agents.value.length === 0 ? "no agent on this branch" : `asked ${agents.value.map((agent) => agent.label).join(", ")}`
+      )
+    }).pipe(Effect.provide(watcherLayer(host)))
+).pipe(Command.withDescription("ask the agent on this pull request's branch whether its review comments are resolved"))
+
 const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))
 
 const callerPane = Effect.gen(function* () {
@@ -215,7 +231,7 @@ const claims = Command.make("claims", {}, () =>
 
 const prwatch = Command.make("prwatch").pipe(
   Command.withDescription("hand new reviews, comments and CI results on your pull requests to the coding agent on that branch"),
-  Command.withSubcommands([run, once, status, ack, claim, release, claims])
+  Command.withSubcommands([run, once, status, ack, check, claim, release, claims])
 )
 
 Command.run(prwatch, { version: pkg.version }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

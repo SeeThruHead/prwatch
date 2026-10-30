@@ -59,6 +59,7 @@ prwatch once --dry-run    # print what would be sent
 prwatch run               # see which pull requests changed every 10 seconds (--probe), fetch everything every 2 minutes (--interval)
 prwatch status            # the pull requests being watched; ● marks the ones that need you
 prwatch ack acme/app#42   # clear the ● once you have looked
+prwatch check acme/app#42 # ask the agent on that branch which review comments are still open
 ```
 
 ### Pull requests you are reviewing

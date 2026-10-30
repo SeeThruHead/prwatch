@@ -53,6 +53,21 @@ const heading = (pull: PullRequest) =>
 export const agentMessage = (pull: PullRequest, changes: readonly Change[], instructions: Text) =>
   Text.make([heading(pull), ...changes.map((change) => `- ${describe(change)}`), instructions].join("\n"))
 
+const CHECK_ASKS = {
+  author:
+    "Read every review thread and comment with gh and tell the user which are resolved, which are still open, and what each open one needs.",
+  reviewer: "Read the user's review threads with gh and tell the user which the author has addressed and which are still open."
+} as const
+
+export const checkMessage = (pull: PullRequest, instructions: Text) =>
+  Text.make(
+    [
+      `[prwatch] the user asked you to check the comments on ${pull.key} "${pull.title}" (${pull.url}).`,
+      CHECK_ASKS[pull.role],
+      instructions
+    ].join("\n")
+  )
+
 export const notification = (pull: PullRequest, changes: readonly Change[]) => ({
   title: Text.make(`${pull.key} ${pull.title}`),
   body: Text.make(changes.map(describe).join("\n"))

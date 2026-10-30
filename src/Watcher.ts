@@ -3,8 +3,8 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Sch
 import { type Change, type Seen, changesSince, needsYou, snapshotOf } from "./Changes.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
-import { type Branch, Count, type HostName, type IsoTime, type RepoSlug, type Sha, Text, isoTime, sameRepo } from "./Brands.ts"
-import { agentMessage, notification, summary } from "./Message.ts"
+import { type Branch, Count, type PrKey, type HostName, type IsoTime, type RepoSlug, type Sha, Text, isoTime, sameRepo } from "./Brands.ts"
+import { agentMessage, checkMessage, notification, summary } from "./Message.ts"
 import { type Claims, type Status, type StatusPull, Store } from "./Store.ts"
 import { Workspace } from "./Workspace.ts"
 
@@ -134,6 +134,7 @@ export class Watcher extends Context.Service<
   Watcher,
   {
     readonly cycle: (options: Options) => Effect.Effect<readonly Delivery[], unknown>
+    readonly check: (key: PrKey, options: Options) => Effect.Effect<Option.Option<readonly Agent[]>, unknown>
     readonly watch: (options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration }) => Effect.Effect<never>
   }
 >()("prwatch/Watcher") {
@@ -214,6 +215,21 @@ export class Watcher extends Context.Service<
         return yield* dispatch(pulls, options)
       })
 
+      const check = Effect.fn("Watcher.check")(function* (key: PrKey, options: Options) {
+        const { pulls } = yield* github.pullRequests
+        const pull = pulls.find((candidate) => candidate.key === key)
+        if (pull === undefined) return Option.none()
+
+        const [found, claims] = yield* Effect.all([placed(), store.claims], { concurrency: 2 })
+        const agents = recipients(pull, found, claims)
+        const message = checkMessage(pull, pull.role === "reviewer" ? options.reviewInstructions : options.instructions)
+
+        if (options.dryRun) yield* Effect.log(`[dry run] to ${agents.map((agent) => agent.label).join(", ") || "nobody"}\n${message}`)
+        else yield* Effect.forEach(agents, (agent) => host.deliver(agent.id, message), { discard: true })
+
+        return Option.some(agents)
+      })
+
       const tick = Effect.fn("Watcher.tick")(function* (state: Ref.Ref<Synced | undefined>, options: Options, interval: Duration.Duration) {
         const synced = yield* Ref.get(state)
         const now = yield* DateTime.now
@@ -254,7 +270,7 @@ export class Watcher extends Context.Service<
           )
         )
 
-      return Watcher.of({ cycle, watch })
+      return Watcher.of({ cycle, check, watch })
     })
   )
 }

@@ -254,6 +254,9 @@ struct PullRow: View {
       }
       HStack(spacing: 6) {
         Button { watch.open(pull) } label: { Label("Open", systemImage: "safari") }
+        Button { watch.check(pull) } label: { Label("Check comments", systemImage: "text.bubble") }
+          .disabled(watch.checks[pull.key] == Watch.asking)
+          .help("Ask the agent on this branch which review comments are resolved")
         if let agentId = pull.agentId, watch.status?.host == "herdr", !agentId.hasPrefix("claude:") {
           Button { watch.focus(pull) } label: { Label("Pane", systemImage: "terminal") }
         }
@@ -265,6 +268,9 @@ struct PullRow: View {
           .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
       }
       .buttonStyle(.bordered).controlSize(.small)
+      if let checked = watch.checks[pull.key] {
+        Text(checked).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+      }
     }
   }
 }
