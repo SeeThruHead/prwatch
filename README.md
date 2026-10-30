@@ -82,6 +82,8 @@ A claim ends by itself when the session or pane goes away or the pull request cl
 
 Notifications on herdr are silent. Set `PRWATCH_NOTIFY_SOUND` to `done` or `request` in your shell profile to hear one; the menu bar app starts the watcher through your login shell, so it picks the setting up on its next restart.
 
+Start agent (`prwatch start`) gives the new agent the pull request link and a prompt that asks which review comments are resolved. Set `PRWATCH_START_PROMPT` in your shell profile, or pass `--prompt`, to ask something else; the agent is always told to use a worktree for the pull request's code rather than switch the branch of your checkout.
+
 State lives in `~/.prwatch` (`PRWATCH_HOME` to change it): `seen.json` for what has already been delivered and `status.json` for tools such as a menu bar app.
 
 ## Development

@@ -50,12 +50,17 @@ describe("checkMessage", () => {
 })
 
 describe("startMessage", () => {
-  it("links the pull request and asks which comments are resolved", () => {
-    const message = startMessage(Url.make("https://github.com/acme/app/pull/1"), Text.make("Show the user first."))
+  it("links the pull request, asks the prompt, and keeps the agent off this checkout's branch", () => {
+    const message = startMessage(
+      Url.make("https://github.com/acme/app/pull/1"),
+      Text.make("Check the comments."),
+      Text.make("Show the user first.")
+    )
 
     expect(message.split("\n")).toEqual([
       "https://github.com/acme/app/pull/1",
-      "Make sure the review comments on this pull request have been resolved: read every thread with gh and report which have been resolved and which have not.",
+      "Check the comments.",
+      "If you need the pull request's code, use the existing worktree on its branch if there is one (git worktree list), otherwise create a new worktree for it. Never switch the branch of this checkout.",
       "Show the user first."
     ])
   })

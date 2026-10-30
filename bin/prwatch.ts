@@ -13,7 +13,7 @@ import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
 import { Host } from "../src/Host.ts"
-import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS, startMessage } from "../src/Message.ts"
+import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS, START_PROMPT, startMessage } from "../src/Message.ts"
 import { Shell } from "../src/Shell.ts"
 import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
@@ -178,18 +178,30 @@ const check = Command.make(
     }).pipe(Effect.provide(watcherLayer(host)))
 ).pipe(Command.withDescription("ask the agent on this pull request's branch whether its review comments are resolved"))
 
-const start = Command.make("start", { pull: pullArgument, host: hostFlag, instructions }, ({ pull, host, instructions }) =>
-  Effect.gen(function* () {
-    const key = yield* pullKey(pull)
-    const hash = key.lastIndexOf("#")
-    const repo = repoSlug(key.slice(0, hash))
-    const url = Url.make(`https://github.com/${repo}/pull/${key.slice(hash + 1)}`)
-    const agents = yield* Host
-    if (agents.start === undefined) return yield* Console.log(`${agents.name} cannot start agents`)
+const startPrompt = Flag.String("prompt").pipe(
+  Flag.withDescription(
+    "what the new agent is asked to do, after the pull request link; defaults to $PRWATCH_START_PROMPT, then a check of which review comments are resolved"
+  ),
+  Flag.withSchema(Text),
+  Flag.withDefault(Text.make(""))
+)
 
-    const where = yield* agents.start(repo, startMessage(url, instructions))
-    yield* Console.log(`started ${where}`)
-  }).pipe(Effect.provide(withClaudeSessions(hostLayer(host)).pipe(Layer.provide(Shell.layer))))
+const start = Command.make(
+  "start",
+  { pull: pullArgument, host: hostFlag, prompt: startPrompt, instructions },
+  ({ pull, host, prompt, instructions }) =>
+    Effect.gen(function* () {
+      const ask = prompt || Text.make(yield* Config.String("PRWATCH_START_PROMPT").pipe(Config.withDefault(START_PROMPT)))
+      const key = yield* pullKey(pull)
+      const hash = key.lastIndexOf("#")
+      const repo = repoSlug(key.slice(0, hash))
+      const url = Url.make(`https://github.com/${repo}/pull/${key.slice(hash + 1)}`)
+      const agents = yield* Host
+      if (agents.start === undefined) return yield* Console.log(`${agents.name} cannot start agents`)
+
+      const where = yield* agents.start(repo, startMessage(url, ask, instructions))
+      yield* Console.log(`started ${where}`)
+    }).pipe(Effect.provide(withClaudeSessions(hostLayer(host)).pipe(Layer.provide(Shell.layer))))
 ).pipe(Command.withDescription("start an agent that checks which review comments on this pull request are resolved"))
 
 const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))

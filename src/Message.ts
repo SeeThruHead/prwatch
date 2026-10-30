@@ -68,14 +68,14 @@ export const checkMessage = (pull: PullRequest, instructions: Text) =>
     ].join("\n")
   )
 
-export const startMessage = (url: Url, instructions: Text) =>
-  Text.make(
-    [
-      url,
-      "Make sure the review comments on this pull request have been resolved: read every thread with gh and report which have been resolved and which have not.",
-      instructions
-    ].join("\n")
-  )
+export const START_PROMPT = Text.make(
+  "Make sure the review comments on this pull request have been resolved: read every thread with gh and report which have been resolved and which have not."
+)
+
+const CHECKOUT_RULE =
+  "If you need the pull request's code, use the existing worktree on its branch if there is one (git worktree list), otherwise create a new worktree for it. Never switch the branch of this checkout."
+
+export const startMessage = (url: Url, prompt: Text, instructions: Text) => Text.make([url, prompt, CHECKOUT_RULE, instructions].join("\n"))
 
 export const notification = (pull: PullRequest, changes: readonly Change[]) => ({
   title: Text.make(`${pull.key} ${pull.title}`),
