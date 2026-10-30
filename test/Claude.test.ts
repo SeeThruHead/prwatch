@@ -47,9 +47,20 @@ describe("claude sessions", () => {
     ])
   })
 
-  it("prefers a Claude session over a Claude pane in the same worktree, and keeps every other pane", () => {
+  it("replaces a Claude pane with the only session in its worktree, which takes over the pane's claims", () => {
     const panes = [pane("w1:p1", "/work/app"), pane("w1:p3", "/work/app", "codex"), pane("w1:p2", "/work/other")]
-    expect(preferSessions([pane("claude:s-1", "/work/app")], panes).map((agent) => agent.id)).toEqual(["claude:s-1", "w1:p3", "w1:p2"])
+    const agents = preferSessions([pane("claude:s-1", "/work/app")], panes)
+
+    expect(agents.map((agent) => [agent.id, agent.aliases ?? []])).toEqual([
+      ["claude:s-1", ["w1:p1"]],
+      ["w1:p3", []],
+      ["w1:p2", []]
+    ])
+  })
+
+  it("keeps a Claude pane when several sessions share its directory, since it can't tell which one it is", () => {
+    const sessions = [pane("claude:s-1", "/work/app"), pane("claude:s-2", "/work/app")]
+    expect(preferSessions(sessions, [pane("w1:p1", "/work/app")]).map((agent) => agent.id)).toEqual(["claude:s-1", "claude:s-2", "w1:p1"])
   })
 
   it("writes one newline-terminated user message", () => {

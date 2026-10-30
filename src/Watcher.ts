@@ -36,10 +36,13 @@ const reachable = (agent: Agent) => agent.status !== "blocked"
 
 type Found = { readonly agents: readonly Agent[]; readonly placed: readonly Placed[] }
 
+const answersTo = (agent: Agent) => [agent.id, ...(agent.aliases ?? [])]
+
 export const recipients = (pull: PullRequest, found: Found, claims: Claims): readonly Agent[] => {
   const claimed = new Set((claims[pull.key] ?? []).map((claim) => claim.agent))
-  const byClaim = found.agents.filter((agent) => claimed.has(agent.id))
-  const byWorktree = found.placed.filter(onBranch(pull)).filter((agent) => !claimed.has(agent.id))
+  const isClaimed = (agent: Agent) => answersTo(agent).some((id) => claimed.has(id))
+  const byClaim = found.agents.filter(isClaimed)
+  const byWorktree = found.placed.filter(onBranch(pull)).filter((agent) => !isClaimed(agent))
 
   return [...byClaim, ...byWorktree].filter(reachable)
 }
@@ -53,7 +56,7 @@ const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Foun
   })
 
 export const liveClaims = (claims: Claims, pulls: readonly PullRequest[], agents: readonly Agent[]): Claims => {
-  const present = new Set(agents.map((agent) => agent.id))
+  const present = new Set(agents.flatMap(answersTo))
 
   return Object.fromEntries(
     Object.entries(claims)

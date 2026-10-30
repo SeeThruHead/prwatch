@@ -49,11 +49,18 @@ export const agentsOf = (sessions: readonly Listed[]): readonly Agent[] =>
   }))
 
 export const preferSessions = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Agent[] => {
-  const covered = new Set(sessions.map((session) => session.cwd))
+  const onlySessionAt = (terminal: Agent) => {
+    const here = sessions.filter((session) => session.cwd === terminal.cwd)
+    return terminal.program === "claude" && here.length === 1 ? here[0] : undefined
+  }
+  const replaced = terminals.filter((terminal) => onlySessionAt(terminal) !== undefined)
+  const panesOf = (session: Agent) => replaced.filter((terminal) => onlySessionAt(terminal) === session).map((terminal) => terminal.id)
+  const withPanes = (session: Agent) => {
+    const panes = panesOf(session)
+    return panes.length === 0 ? session : { ...session, aliases: panes }
+  }
 
-  const duplicate = (terminal: Agent) => terminal.program === "claude" && covered.has(terminal.cwd)
-
-  return [...sessions, ...terminals.filter((terminal) => !duplicate(terminal))]
+  return [...sessions.map(withPanes), ...terminals.filter((terminal) => onlySessionAt(terminal) === undefined)]
 }
 
 export const inboxLines = (text: Text) => `${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`

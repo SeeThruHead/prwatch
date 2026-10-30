@@ -26,6 +26,7 @@ export type Agent = {
   readonly cwd: FilePath
   readonly label: Text
   readonly program?: Text
+  readonly aliases?: readonly AgentId[]
   readonly status: "idle" | "working" | "blocked" | "unknown"
 }
 
