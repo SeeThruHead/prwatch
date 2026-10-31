@@ -1,6 +1,8 @@
 import { DateTime, Effect } from "effect"
 
 import { type AgentId, type PrKey, isoTime } from "./Brands.ts"
+import { initial } from "./Runs.ts"
+import type { Pending } from "./RunState.ts"
 import { Store } from "./Store.ts"
 
 export const acknowledge = Effect.fn("Bookkeeping.acknowledge")(function* (key: PrKey) {
@@ -38,4 +40,12 @@ export const release = Effect.fn("Bookkeeping.release")(function* (keys: readonl
     .filter(([, entries]) => entries.length > 0)
 
   yield* store.saveClaims(Object.fromEntries(kept))
+})
+
+export const watchRun = Effect.fn("Bookkeeping.watchRun")(function* (pending: Pending, agent: AgentId) {
+  const store = yield* Store
+  const state = (yield* store.runs) ?? initial(yield* DateTime.now)
+  const agents = [...(state.watches[pending.key]?.agents ?? []).filter((entry) => entry !== agent), agent]
+
+  yield* store.saveRuns({ ...state, watches: { ...state.watches, [pending.key]: { pending, agents } } })
 })

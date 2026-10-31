@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Config, Console, Duration, Effect, Layer, Option, Schedule, Schema } from "effect"
+import { Config, Console, Duration, Effect, FileSystem, Layer, Option, Schedule, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
 import { PrKey, Text, agentId } from "../src/Brands.ts"
+import { Activity } from "../src/Activity.ts"
+import { RulesConfig } from "../src/Config.ts"
+import { describeRule } from "../src/Describe.ts"
+import { RunWatcher } from "../src/Runs.ts"
+import { Pending } from "../src/RunState.ts"
 import { GitHub } from "../src/GitHub.ts"
 import { callerSession, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
@@ -44,6 +49,12 @@ const probe = Flag.Int("probe").pipe(
   Flag.withDefault(10)
 )
 
+const runsInterval = Flag.Int("runs-interval").pipe(
+  Flag.withDescription("seconds between checks of workflow runs, deployments and releases that your watch rules match"),
+  Flag.withSchema(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(10)), Schema.brand("Seconds"))),
+  Flag.withDefault(30)
+)
+
 type HostChoice = "auto" | "herdr" | "cmux" | "orca" | "tmux"
 
 const answers = (command: "herdr" | "cmux" | "orca", args: readonly ("agent" | "list" | "ping" | "terminal" | "--json")[]) =>
@@ -71,9 +82,11 @@ const hostLayer = (host: HostChoice) => {
   return Layer.unwrap(detectHost)
 }
 
+const runsLayer = RunWatcher.layer.pipe(Layer.provide(Layer.mergeAll(RulesConfig.layer, Activity.layer, Store.layer)))
+
 const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(
-    Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, withClaudeSessions(hostLayer(host)))),
+    Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, runsLayer, withClaudeSessions(hostLayer(host)))),
     Layer.provide(Shell.layer)
   )
 
@@ -95,8 +108,8 @@ const parentExited = Effect.gen(function* () {
 
 const run = Command.make(
   "run",
-  { host: hostFlag, dryRun, instructions, reviewInstructions, interval, probe },
-  ({ host, dryRun, instructions, reviewInstructions, interval, probe }) =>
+  { host: hostFlag, dryRun, instructions, reviewInstructions, interval, probe, runsInterval },
+  ({ host, dryRun, instructions, reviewInstructions, interval, probe, runsInterval }) =>
     Effect.gen(function* () {
       const watcher = yield* Watcher
       yield* Console.log(`prwatch: checking which pull requests changed every ${probe}s, and all of them every ${interval}s`)
@@ -105,7 +118,8 @@ const run = Command.make(
         instructions,
         reviewInstructions,
         interval: Duration.seconds(interval),
-        probe: Duration.seconds(probe)
+        probe: Duration.seconds(probe),
+        runsEvery: Duration.seconds(runsInterval)
       })
       return yield* Effect.raceFirst(watching, parentExited)
     }).pipe(Effect.provide(watcherLayer(host)))
@@ -117,9 +131,11 @@ const once = Command.make(
   ({ host, dryRun, instructions, reviewInstructions }) =>
     Effect.gen(function* () {
       const watcher = yield* Watcher
-      const deliveries = yield* watcher.cycle({ dryRun, instructions, reviewInstructions })
+      const { pulls, runs } = yield* watcher.cycle({ dryRun, instructions, reviewInstructions })
 
-      yield* Console.log(deliveries.length === 0 ? "nothing new" : `${deliveries.length} pull requests had updates`)
+      yield* Console.log(
+        pulls.length === 0 && runs.length === 0 ? "nothing new" : `${pulls.length} pull requests and ${runs.length} runs had updates`
+      )
     }).pipe(Effect.provide(watcherLayer(host)))
 ).pipe(Command.withDescription("check once; the first run only records what exists so far"))
 
@@ -213,9 +229,112 @@ const claims = Command.make("claims", {}, () =>
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("list which panes asked for which pull requests"))
 
+const RUN_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/actions\/runs\/(\d+)/
+
+class NotARunUrl extends Schema.TaggedError<NotARunUrl>()("NotARunUrl", { input: Text }) {
+  override get message() {
+    return `${this.input} is not a workflow run URL, like https://github.com/owner/name/actions/runs/123`
+  }
+}
+
+const runPending = Effect.fn("prwatch.runPending")(function* (input: Text) {
+  const url = RUN_URL.exec(input)
+  if (url === null) return yield* new NotARunUrl({ input })
+
+  return yield* Schema.decodeUnknownEffect(Pending)({
+    key: `workflow_run:${url[1]}:${url[2]}`,
+    source: "workflow_run",
+    repo: url[1],
+    ref: url[2]
+  })
+})
+
+const runArgument = Argument.String("run").pipe(
+  Argument.withDescription("a workflow run URL, like https://github.com/owner/name/actions/runs/123"),
+  Argument.withSchema(Text)
+)
+
+const watchRun = Command.make("watch-run", { run: runArgument, agent: agentFlag }, ({ run, agent }) =>
+  Effect.gen(function* () {
+    const pane = agent || (yield* callerPane)
+    if (pane === "") return yield* Console.error("prwatch watch-run: not inside a herdr, cmux, orca or tmux pane; pass --agent <pane id>")
+
+    const pending = yield* runPending(run)
+    yield* Bookkeeping.watchRun(pending, agentId(pane))
+    yield* Console.log(`${pane} will hear when ${pending.key} finishes`)
+  }).pipe(Effect.provide(Store.layer))
+).pipe(Command.withDescription("tell this pane when a workflow run finishes, whoever started it"))
+
+const configLayer = Layer.mergeAll(
+  RulesConfig.layer,
+  RunWatcher.layer.pipe(Layer.provide(Layer.mergeAll(RulesConfig.layer, Activity.layer, Store.layer)))
+).pipe(Layer.provide(Shell.layer))
+
+const configPath = Command.make("path", {}, () =>
+  Effect.gen(function* () {
+    const config = yield* RulesConfig
+    yield* Console.log([`directory ${config.dir}`, `machine ${config.machine}`, ...config.files.map((file) => `file ${file}`)].join("\n"))
+  }).pipe(Effect.provide(RulesConfig.layer))
+).pipe(Command.withDescription("show where watch rules are read from and the machine name rules match against"))
+
+const configShow = Command.make("show", { json: Flag.Boolean("json").pipe(Flag.withDefault(false)) }, ({ json }) =>
+  Effect.gen(function* () {
+    const config = yield* RulesConfig
+    if (json) {
+      const fs = yield* FileSystem.FileSystem
+      const files = yield* Effect.forEach(config.files, (path) =>
+        Effect.map(
+          Effect.orElseSucceed(fs.exists(path), () => false),
+          (exists) => ({ path, exists })
+        )
+      )
+      const loaded = yield* Effect.match(config.load, {
+        onFailure: (error) => ({ rules: [], error: error.message }),
+        onSuccess: (located) => ({ rules: located.map(({ rule, file }) => ({ file, rule, summary: describeRule(rule) })) })
+      })
+
+      return yield* Console.log(JSON.stringify({ directory: config.dir, machine: config.machine, files, ...loaded }, null, 2))
+    }
+
+    const located = yield* config.load
+    if (located.length === 0) return yield* Console.log(`no watch rules; put them in ${config.files.join(" or ")}`)
+
+    yield* Effect.forEach(located, ({ rule, file }) => Console.log(`${rule.name}  (${file})\n  ${describeRule(rule)}`), { discard: true })
+  }).pipe(Effect.provide(RulesConfig.layer))
+).pipe(Command.withDescription("list the watch rules in effect and the file each comes from"))
+
+const configTest = Command.make("test", { run: runArgument }, ({ run }) =>
+  Effect.gen(function* () {
+    const runs = yield* RunWatcher
+    const pending = yield* runPending(run)
+    const explained = yield* runs.explain(pending)
+
+    yield* Console.log(
+      Option.match(explained.occurrence, {
+        onNone: () => `${pending.key} was not found as ${explained.viewer}`,
+        onSome: (occurrence) =>
+          `${occurrence.key} ${occurrence.outcome} actor ${Option.getOrElse(occurrence.actor, () => "unknown")} (you are ${explained.viewer})`
+      })
+    )
+    yield* Effect.forEach(
+      explained.verdicts,
+      (verdict) =>
+        Console.log(
+          `${verdict.rule.name}: ${verdict.matched ? "matches" : "does not match"}, ${Option.isSome(verdict.linked) ? "linked to you" : "not linked"}, ${verdict.wanted ? "this outcome is wanted" : "this outcome is not wanted"}`
+        ),
+      { discard: true }
+    )
+  }).pipe(Effect.provide(configLayer))
+).pipe(Command.withDescription("show which watch rules match a run, and whether it would reach you"))
+
+const config = Command.make("config").pipe(
+  Command.withDescription("inspect the watch rules"),
+  Command.withSubcommands([configPath, configShow, configTest])
+)
+
 const prwatch = Command.make("prwatch").pipe(
   Command.withDescription("hand new reviews, comments and CI results on your pull requests to the coding agent on that branch"),
-  Command.withSubcommands([run, once, status, ack, claim, release, claims])
+  Command.withSubcommands([run, once, status, ack, claim, release, claims, watchRun, config])
 )
 
 Command.run(prwatch, { version: pkg.version }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

@@ -12,10 +12,28 @@ enum PrwatchBar {
       snapshot(to: URL(fileURLWithPath: arguments[flag + 1]))
       return
     }
+    if let flag = arguments.firstIndex(of: "--snapshot-settings"), flag + 1 < arguments.count {
+      snapshotSettings(to: URL(fileURLWithPath: arguments[flag + 1]))
+      return
+    }
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     app.delegate = controller
     app.run()
+  }
+
+  @MainActor private static func snapshotSettings(to file: URL) {
+    _ = NSApplication.shared
+    let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(watch: Watch()).background(Color(nsColor: .windowBackgroundColor))))
+    window.appearance = NSAppearance(named: .darkAqua)
+    window.orderFront(nil)
+    RunLoop.main.run(until: Date().addingTimeInterval(8))
+    guard let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+    view.appearance = NSAppearance(named: .darkAqua)
+    view.layoutSubtreeIfNeeded()
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+    try? png.write(to: file)
   }
 
   @MainActor private static func snapshot(to file: URL) {
@@ -74,7 +92,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
     item.button?.imagePosition = .imageLeading
     self.item = item
 
-    let host = NSHostingController(rootView: MenuContent(watch: watch, updater: updater))
+    let host = NSHostingController(rootView: MenuContent(watch: watch, updater: updater, openSettings: { [weak self] in self?.showSettings() }))
     host.sizingOptions = .preferredContentSize
     popover.contentViewController = host
     popover.behavior = .transient
@@ -124,6 +142,22 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
     image.isTemplate = true
     return image
+  }
+
+  private var settingsWindow: NSWindow?
+
+  private func showSettings() {
+    popover.performClose(nil)
+    if settingsWindow == nil {
+      let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(watch: watch)))
+      window.title = "prwatch"
+      window.styleMask = [.titled, .closable]
+      window.isReleasedWhenClosed = false
+      window.center()
+      settingsWindow = window
+    }
+    NSApp.activate(ignoringOtherApps: true)
+    settingsWindow?.makeKeyAndOrderFront(nil)
   }
 
   @objc private func toggle() {
@@ -301,6 +335,70 @@ struct PullSection: View {
   }
 }
 
+struct RunRow: View {
+  @ObservedObject var watch: Watch
+  let run: RunEntry
+  @State private var hovering = false
+
+  private var symbol: (name: String, color: Color) {
+    switch run.outcome {
+    case "succeeded": return ("checkmark.circle.fill", .green)
+    case "failed": return ("xmark.circle.fill", .red)
+    case "cancelled": return ("slash.circle", .gray)
+    case "started": return ("clock", .orange)
+    default: return ("circle.dashed", .gray)
+    }
+  }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: symbol.name).font(.system(size: 12)).foregroundStyle(symbol.color).frame(width: 14)
+      Text(run.title).font(.system(size: 13, weight: run.needsYou ? .semibold : .regular)).lineLimit(1)
+      Spacer(minLength: 6)
+      if let rule = run.rule {
+        Text(rule).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+      }
+      Text(age(run.at, now: watch.now) ?? "")
+        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
+    }
+    .padding(.horizontal, 8).padding(.vertical, 6)
+    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hovering ? 0.07 : 0)))
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 }
+    .help(run.key)
+    .onTapGesture { watch.open(run) }
+  }
+}
+
+struct RunSection: View {
+  @ObservedObject var watch: Watch
+  let runs: [RunEntry]
+  @State private var open = true
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      HStack(spacing: 8) {
+        Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 9)
+        Image(systemName: "play.circle").font(.system(size: 11)).foregroundStyle(.blue)
+        Text("Runs").font(.system(size: 12, weight: .bold))
+        Text("\(runs.count)")
+          .font(.system(size: 11, weight: .semibold, design: .monospaced))
+          .padding(.horizontal, 6).padding(.vertical, 1)
+          .background(Capsule().fill(Color.blue.opacity(0.2)))
+        Spacer()
+      }
+      .padding(.horizontal, 8).padding(.vertical, 4)
+      .contentShape(Rectangle())
+      .onTapGesture { open.toggle() }
+      if open {
+        ForEach(runs) { run in
+          RunRow(watch: watch, run: run).padding(.leading, 10)
+        }
+      }
+    }
+  }
+}
+
 struct Stat: View {
   let symbol: String
   let value: Int
@@ -321,6 +419,7 @@ struct Stat: View {
 struct MenuContent: View {
   @ObservedObject var watch: Watch
   @ObservedObject var updater: Updater
+  var openSettings: () -> Void = {}
   @State private var listHeight: CGFloat = 0
 
   private var pulls: [Pull] { watch.status?.pulls ?? [] }
@@ -333,7 +432,7 @@ struct MenuContent: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       Divider()
-      if watch.waiting.isEmpty && watch.others.isEmpty {
+      if watch.waiting.isEmpty && watch.others.isEmpty && watch.runs.isEmpty {
         Label("All quiet", systemImage: "checkmark.seal").font(.system(size: 13)).foregroundStyle(.secondary)
       } else {
         list
@@ -370,6 +469,7 @@ struct MenuContent: View {
       if watch.cliLocation == nil {
         Button("Install CLI") { watch.installCli() }.buttonStyle(.link).font(.system(size: 11))
       }
+      Button("Rules…") { openSettings() }.buttonStyle(.link).font(.system(size: 11))
       Spacer()
       if let version = updater.available {
         Button("Update \(version)") { updater.update() }.disabled(updater.updating)
@@ -390,6 +490,9 @@ struct MenuContent: View {
         }
         if !watch.others.isEmpty {
           PullSection(watch: watch, title: "Other activity", symbol: "tray", color: .gray, pulls: watch.others, open: true)
+        }
+        if !watch.runs.isEmpty {
+          RunSection(watch: watch, runs: watch.runs)
         }
       }
       .fixedSize(horizontal: false, vertical: true)

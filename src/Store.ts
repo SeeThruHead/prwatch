@@ -3,6 +3,7 @@ import { Config, Context, Effect, FileSystem, Layer, Path, Schema } from "effect
 import { AgentId, Count, FilePath, HostName, IsoTime, PrKey, ReviewDecision, Text, Url } from "./Brands.ts"
 import { Seen } from "./Changes.ts"
 import { Checks, Mergeable, Role } from "./GitHub.ts"
+import { RunState, StatusRun } from "./RunState.ts"
 
 export const StatusPull = Schema.Struct({
   key: PrKey,
@@ -26,7 +27,8 @@ export const Status = Schema.Struct({
   updatedAt: IsoTime,
   host: HostName,
   error: Schema.optionalKey(Text),
-  pulls: Schema.Array(StatusPull)
+  pulls: Schema.Array(StatusPull),
+  runs: Schema.optionalKey(Schema.Array(StatusRun))
 })
 export type Status = typeof Status.Type
 
@@ -42,7 +44,7 @@ export class StoreUnwritable extends Schema.TaggedError<StoreUnwritable>()("Stor
   }
 }
 
-type StoreFile = "seen.json" | "status.json" | "claims.json"
+type StoreFile = "seen.json" | "status.json" | "claims.json" | "runs.json"
 
 export class Store extends Context.Service<
   Store,
@@ -54,6 +56,8 @@ export class Store extends Context.Service<
     readonly saveStatus: (status: Status) => Effect.Effect<void, StoreUnwritable>
     readonly claims: Effect.Effect<Claims>
     readonly saveClaims: (claims: Claims) => Effect.Effect<void, StoreUnwritable>
+    readonly runs: Effect.Effect<RunState | undefined>
+    readonly saveRuns: (runs: RunState) => Effect.Effect<void, StoreUnwritable>
   }
 >()("prwatch/Store") {
   static readonly layer = Layer.effect(
@@ -91,7 +95,9 @@ export class Store extends Context.Service<
         status: read("status.json", Status),
         saveStatus: (status) => write("status.json", Status, status),
         claims: Effect.map(read("claims.json", Claims), (claims) => claims ?? {}),
-        saveClaims: (claims) => write("claims.json", Claims, claims)
+        saveClaims: (claims) => write("claims.json", Claims, claims),
+        runs: read("runs.json", RunState),
+        saveRuns: (runs) => write("runs.json", RunState, runs)
       })
     })
   )
