@@ -74,7 +74,7 @@ prwatch release acme/app#42
 prwatch claims
 ```
 
-A claim ends by itself when the session or pane goes away or the pull request closes.
+A claim ends by itself when the session or pane goes away, or three days after the pull request closes, so the deploy of what you merged still reaches the pane that worked on it.
 
 `--instructions "..."` and `--review-instructions "..."` replace the line appended to messages about your own pull requests and about ones you are reviewing.
 

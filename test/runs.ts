@@ -1,6 +1,6 @@
 import { Option, Schema } from "effect"
 
-import { Hostname, Login, RepoSlug, Sha } from "../src/Brands.ts"
+import { Branch, Hostname, Login, RepoSlug, Sha } from "../src/Brands.ts"
 import { Raw } from "../src/Fields.ts"
 import type { PullFact } from "../src/Linking.ts"
 import { type Occurrence, checkRun, commitStatus, deployment, release, workflowRun } from "../src/Occurrence.ts"
@@ -106,6 +106,7 @@ export const merged = (overrides: Partial<PullFact> = {}): PullFact => ({
   open: false,
   merged: true,
   head: Sha.make("feedbee"),
+  branch: Branch.make("sk/the-change"),
   mergeCommit: Option.some(Sha.make("abc1234")),
   author: me,
   ...overrides

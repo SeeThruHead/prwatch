@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 
-import { FieldPath, type Glob, IsoTime, Login, PrNumber, RepoSlug, Sha, type SourceKind, Text } from "./Brands.ts"
+import { Branch, FieldPath, type Glob, IsoTime, Login, PrNumber, RepoSlug, Sha, type SourceKind, Text } from "./Brands.ts"
 import { Raw, distinct, firstBy, globToRegExp, textAt } from "./Fields.ts"
 import type { PullFact } from "./Linking.ts"
 import { type Occurrence, occurrenceOf } from "./Occurrence.ts"
@@ -28,7 +28,7 @@ const PullItem = Schema.Struct({
   state: Text,
   merged_at: Schema.NullOr(IsoTime),
   merge_commit_sha: Schema.NullOr(Sha),
-  head: Schema.Struct({ sha: Sha }),
+  head: Schema.Struct({ sha: Sha, ref: Branch }),
   user: Person
 })
 
@@ -252,6 +252,7 @@ export class Activity extends Context.Service<
           open: pull.state === "open",
           merged: pull.merged_at !== null,
           head: pull.head.sha,
+          branch: pull.head.ref,
           mergeCommit: Option.fromNullishOr(pull.merge_commit_sha),
           author: pull.user.login
         }))

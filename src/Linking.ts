@@ -10,6 +10,7 @@ export type PullFact = {
   readonly open: boolean
   readonly merged: boolean
   readonly head: Sha
+  readonly branch: Branch
   readonly mergeCommit: Option.Option<Sha>
   readonly author: Login
 }
@@ -32,7 +33,10 @@ const linked = (occurrence: Occurrence, pr: Option.Option<PrKey>, claimantsOnly 
   claimantsOnly
 })
 
-const keyOf = (occurrence: Occurrence, pull: PullFact) => Option.some(prKey(occurrence.repo, pull.number))
+const throughPull = (occurrence: Occurrence, pull: PullFact, claimantsOnly = false): Linked => ({
+  ...linked(occurrence, Option.some(prKey(occurrence.repo, pull.number)), claimantsOnly),
+  branch: Option.some(pull.branch)
+})
 
 const headOf = (occurrence: Occurrence, pull: PullFact) => pull.open && pull.head === occurrence.sha
 
@@ -73,15 +77,11 @@ export const resolve = (link: Link, occurrence: Occurrence, context: LinkContext
 
   const own = context.pulls.filter(mine(context))
   if (link === "pr-head-sha")
-    return Option.map(Option.fromNullishOr(own.find((pull) => headOf(occurrence, pull))), (pull) =>
-      linked(occurrence, keyOf(occurrence, pull))
-    )
+    return Option.map(Option.fromNullishOr(own.find((pull) => headOf(occurrence, pull))), (pull) => throughPull(occurrence, pull))
   if (link === "merge-commit")
-    return Option.map(Option.fromNullishOr(own.find((pull) => mergedAs(occurrence, pull))), (pull) =>
-      linked(occurrence, keyOf(occurrence, pull))
-    )
+    return Option.map(Option.fromNullishOr(own.find((pull) => mergedAs(occurrence, pull))), (pull) => throughPull(occurrence, pull))
 
   const any = context.pulls.find((pull) => headOf(occurrence, pull) || mergedAs(occurrence, pull))
 
-  return Option.map(Option.fromNullishOr(any), (pull) => linked(occurrence, keyOf(occurrence, pull), true))
+  return Option.map(Option.fromNullishOr(any), (pull) => throughPull(occurrence, pull, true))
 }

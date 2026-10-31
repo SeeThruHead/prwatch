@@ -90,13 +90,20 @@ const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Foun
     return [{ pull, changes, agents: recipients(pull, found, claims), needsYou: changes.some(needsYou) }]
   })
 
-export const liveClaims = (claims: Claims, pulls: readonly PullRequest[], agents: readonly Agent[]): Claims => {
+const CLAIM_AFTER_CLOSE = Duration.days(3)
+
+export const liveClaims = (claims: Claims, pulls: readonly PullRequest[], agents: readonly Agent[], keepSince: IsoTime): Claims => {
   const present = new Set(agents.flatMap(answersTo))
 
   return Object.fromEntries(
     Object.entries(claims)
-      .filter(([key]) => pulls.some((pull) => pull.key === key))
-      .map(([key, entries]) => [key, entries.filter((entry) => present.has(entry.agent))] as const)
+      .map(
+        ([key, entries]) =>
+          [
+            key,
+            entries.filter((entry) => present.has(entry.agent) && (pulls.some((pull) => pull.key === key) || entry.at >= keepSince))
+          ] as const
+      )
       .filter(([, entries]) => entries.length > 0)
   )
 }
@@ -245,7 +252,10 @@ export class Watcher extends Context.Service<
         if (options.dryRun) return deliveries
 
         yield* store.saveSeen(nextSeen(pulls, seen))
-        if (found.agents.length > 0) yield* store.saveClaims(liveClaims(claims, pulls, found.agents))
+        if (found.agents.length > 0)
+          yield* store.saveClaims(
+            liveClaims(claims, pulls, found.agents, isoTime(DateTime.subtractDuration(yield* DateTime.now, CLAIM_AFTER_CLOSE)))
+          )
         yield* store.saveStatus(nextStatus(previous, pulls, deliveries, host.name, at))
 
         return deliveries

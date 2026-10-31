@@ -19,6 +19,9 @@ describe("resolve", () => {
 
   it("links the merge commit of your merged pull request, and nobody else's", () => {
     expect(Option.map(resolve("merge-commit", run(), context()), (linked) => linked.pr)).toEqual(Option.some(Option.some("acme/shop#7")))
+    expect(Option.map(resolve("merge-commit", run(), context()), (linked) => linked.branch)).toEqual(
+      Option.some(Option.some("sk/the-change"))
+    )
     expect(Option.isNone(resolve("merge-commit", run(), context([merged({ author: Login.make("other") })])))).toBe(true)
     expect(Option.isNone(resolve("merge-commit", run({ head_sha: "0000000" }), context()))).toBe(true)
   })
