@@ -31,5 +31,8 @@ export const pull = (overrides: Partial<typeof PullRequest.Encoded> = {}): PullR
     role: "author",
     commits: ["abc1234def"],
     items: [],
+    queued: false,
+    merged: false,
+    events: [],
     ...overrides
   })

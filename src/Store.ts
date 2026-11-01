@@ -19,7 +19,9 @@ export const StatusPull = Schema.Struct({
   checks: Schema.optionalKey(Checks),
   decision: Schema.optionalKey(Schema.NullOr(ReviewDecision)),
   mergeable: Schema.optionalKey(Mergeable),
-  comments: Schema.optionalKey(Count)
+  comments: Schema.optionalKey(Count),
+  queued: Schema.optionalKey(Schema.Boolean),
+  merged: Schema.optionalKey(Schema.Boolean)
 })
 export type StatusPull = typeof StatusPull.Type
 

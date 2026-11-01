@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 
 import { NodeId, PrKey, ReviewDecision, Sha } from "./Brands.ts"
-import { Checks, type Item, type PullRequest } from "./GitHub.ts"
+import { Checks, type Item, type Lifecycle, type PullRequest } from "./GitHub.ts"
 
 export const SeenPull = Schema.Struct({
   items: Schema.Array(NodeId),
@@ -21,10 +21,12 @@ export type Change =
   | { readonly kind: "decision"; readonly decision: ReviewDecision }
   | { readonly kind: "ready" }
   | { readonly kind: "pushed"; readonly head: Sha }
+  | { readonly kind: "lifecycle"; readonly event: Lifecycle }
 
 const isSettled = (checks: Checks): checks is "passed" | "failed" => checks === "passed" || checks === "failed"
 
 export const isReady = (pull: PullRequest, before: boolean) => {
+  if (pull.merged) return false
   if (pull.draft) return false
   if (pull.checks === "failed" || pull.checks === "pending") return false
   if (pull.decision !== "APPROVED") return false
@@ -34,7 +36,7 @@ export const isReady = (pull: PullRequest, before: boolean) => {
 }
 
 export const snapshotOf = (pull: PullRequest, seen: SeenPull | undefined): SeenPull => ({
-  items: pull.items.map((item) => item.id),
+  items: [...pull.items.map((item) => item.id), ...pull.events.map((event) => event.id)],
   head: pull.head,
   checks: pull.checks,
   decision: pull.decision,
@@ -65,11 +67,23 @@ export const changesSince = (pull: PullRequest, seen: SeenPull | undefined): rea
   const decision: readonly Change[] =
     pull.decision !== null && pull.decision !== seen.decision ? [{ kind: "decision", decision: pull.decision }] : []
   const ready: readonly Change[] = isReady(pull, seen.ready) && !seen.ready ? [{ kind: "ready" }] : []
+  const lifecycle = pull.events.filter((event) => !known.has(event.id)).map((event): Change => ({ kind: "lifecycle", event }))
 
-  return [...items, ...checks, ...decision, ...ready]
+  return [...items, ...checks, ...decision, ...ready, ...lifecycle]
+}
+
+export const isLifecycle = (change: Change) => change.kind === "lifecycle"
+
+const isMerge = (change: Change) => change.kind === "lifecycle" && change.event.kind === "merged"
+
+export const anyNeedsYou = (changes: readonly Change[]) => {
+  const merged = changes.some(isMerge)
+
+  return changes.some((change) => needsYou(change) && !(merged && isLifecycle(change)))
 }
 
 export const needsYou = (change: Change) => {
+  if (change.kind === "lifecycle") return change.event.kind === "unqueued"
   if (change.kind === "item") return !change.item.bot
   if (change.kind === "decision") return change.decision === "APPROVED" || change.decision === "CHANGES_REQUESTED"
 

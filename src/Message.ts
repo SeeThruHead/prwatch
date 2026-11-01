@@ -2,7 +2,7 @@ import { Option } from "effect"
 
 import { type FilePath, type LineNumber, type Markdown, type PrKey, type RunOutcome, type SourceKind, Text } from "./Brands.ts"
 import type { Change } from "./Changes.ts"
-import type { PullRequest } from "./GitHub.ts"
+import type { Lifecycle, PullRequest } from "./GitHub.ts"
 import type { Occurrence } from "./Occurrence.ts"
 
 const EXCERPT = 240
@@ -34,7 +34,15 @@ const where = (path: FilePath | undefined, line: LineNumber | undefined) => {
   return line === undefined ? ` on ${path}` : ` on ${path}:${line}`
 }
 
+const lifecycleText = (event: Lifecycle) => {
+  if (event.kind === "queued") return "entered the merge queue"
+  if (event.kind === "merged") return `merged as ${event.commit.slice(0, 7)}`
+
+  return `removed from the merge queue: ${event.reason.replaceAll("_", " ")}`
+}
+
 const describe = (change: Change) => {
+  if (change.kind === "lifecycle") return lifecycleText(change.event)
   if (change.kind === "checks") return `CI ${change.checks} on ${change.head.slice(0, 7)}`
   if (change.kind === "decision") return `review decision is now ${change.decision.toLowerCase().replaceAll("_", " ")}`
   if (change.kind === "ready") return "approved, checks passing and mergeable: ready to merge once the user says so"

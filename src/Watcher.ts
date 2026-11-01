@@ -1,6 +1,6 @@
 import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect"
 
-import { type Change, type Seen, changesSince, needsYou, snapshotOf } from "./Changes.ts"
+import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
 import {
@@ -87,7 +87,7 @@ const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Foun
     const changes = changesSince(pull, seen?.[pull.key])
     if (changes.length === 0) return []
 
-    return [{ pull, changes, agents: recipients(pull, found, claims), needsYou: changes.some(needsYou) }]
+    return [{ pull, changes, agents: recipients(pull, found, claims), needsYou: anyNeedsYou(changes) }]
   })
 
 const CLAIM_AFTER_CLOSE = Duration.days(3)
@@ -124,7 +124,9 @@ export const statsOf = (pull: PullRequest) => ({
   checks: pull.checks,
   decision: pull.decision,
   mergeable: pull.mergeable,
-  comments: Count.make(pull.items.filter((item) => !item.bot).length)
+  comments: Count.make(pull.items.filter((item) => !item.bot).length),
+  ...(pull.queued ? { queued: true } : {}),
+  ...(pull.merged ? { merged: true } : {})
 })
 
 const nextStatus = (
@@ -222,7 +224,7 @@ export class Watcher extends Context.Service<
           delivery.pull.role === "reviewer" ? options.reviewInstructions : options.instructions
         )
         const { title, body } = notification(delivery.pull, delivery.changes)
-        const alert = delivery.needsYou || delivery.agents.length === 0
+        const alert = delivery.needsYou || delivery.agents.length === 0 || delivery.changes.some(isLifecycle)
 
         if (options.dryRun)
           return yield* Effect.log(
