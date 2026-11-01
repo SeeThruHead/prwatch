@@ -23,7 +23,7 @@ The app checks GitHub's latest release at launch and every 6 hours (`app/Sources
 - `Brands`: the branded strings and numbers (ids, SHAs, logins, URLs, times, text) and GitHub's enums as literal unions. Values are decoded into brands at the edge (GitHub, the multiplexers, the CLI, the state files).
 - `Shell`: the only module that starts processes. Every command has a 30 second timeout and fails with `CommandFailed`.
 - `GitHub`: GraphQL through `gh`, decoded with Schema into `PullRequest`. `pullRequests` fetches every open pull request in full; `stamps` is a cheap probe of what each one looks like now (updated time, head, CI, review decision, mergeable); `pullsById` fetches only the ones whose stamp moved.
-- `Changes`: pure. Diffs a pull request against what was seen last time. The first sight of a pull request is a baseline and produces nothing.
+- `Changes`: pure. Diffs a pull request against what was seen last time, including the merge queue entries, removals and merge that GitHub records as timeline events (each reported once by its id). The first sight of a pull request is a baseline and produces nothing.
 - `Message`: pure. The text an agent receives and the notification text.
 - `Host`: the service a multiplexer provides. `hosts/Herdr.ts`, `hosts/Cmux.ts`, `hosts/Orca.ts` and `hosts/Tmux.ts` are its layers. `hosts/Claude.ts` wraps whichever one runs: it lists Claude Code sessions with `claude agents --json`, delivers to a session through its inbox socket (the path comes from `~/.claude/sessions/*.json`), and hands every other agent to the wrapped host. A Claude pane in the same directory as a session is left out so the session is not messaged twice.
 - `Workspace`: the repository and branch of a working directory, read with git.

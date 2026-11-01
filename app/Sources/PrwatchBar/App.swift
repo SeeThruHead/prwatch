@@ -211,7 +211,13 @@ struct Pills: View {
 
   var body: some View {
     HStack(spacing: 4) {
-      if pull.ready {
+      if pull.merged == true {
+        Pill(symbol: "checkmark.seal.fill", color: .purple, help: "Merged")
+      }
+      if pull.queued == true {
+        Pill(symbol: "arrow.triangle.merge", color: .purple, help: "In the merge queue")
+      }
+      if pull.ready && pull.merged != true {
         Pill(symbol: "arrow.triangle.merge", color: .green, help: "Ready to merge")
       }
       if pull.draft == true {

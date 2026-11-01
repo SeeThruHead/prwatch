@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
 
-import { Sha } from "../src/Brands.ts"
-import { changesSince, needsYou, snapshotOf } from "../src/Changes.ts"
+import { IsoTime, NodeId, Sha, Text } from "../src/Brands.ts"
+import { anyNeedsYou, changesSince, isLifecycle, needsYou, snapshotOf } from "../src/Changes.ts"
+import type { Lifecycle } from "../src/GitHub.ts"
 import { item, pull } from "./fixtures.ts"
 
 describe("changesSince", () => {
@@ -32,6 +33,70 @@ describe("changesSince", () => {
     expect(ready.ready).toBe(true)
     expect(changesSince(pull({ decision: "APPROVED", checks: "passed", mergeable: "unknown" }), ready)).toEqual([])
     expect(changesSince(approved, { ...ready, ready: false })).toContainEqual({ kind: "ready" })
+  })
+})
+
+const queued: Lifecycle = { id: NodeId.make("q1"), kind: "queued", at: IsoTime.make("2026-01-01T00:00:00Z") }
+const kicked: Lifecycle = {
+  id: NodeId.make("r1"),
+  kind: "unqueued",
+  at: IsoTime.make("2026-01-01T00:10:00Z"),
+  reason: Text.make("failed_checks")
+}
+const merged: Lifecycle = { id: NodeId.make("m1"), kind: "merged", at: IsoTime.make("2026-01-01T01:00:00Z"), commit: Sha.make("a0f6b93") }
+
+describe("lifecycle changes", () => {
+  it("reports a queue entry, a kick and the merge once each, in order", () => {
+    const before = snapshotOf(pull(), undefined)
+
+    expect(changesSince(pull({ events: [queued] }), before)).toEqual([{ kind: "lifecycle", event: queued }])
+    const afterQueue = snapshotOf(pull({ events: [queued] }), before)
+    expect(changesSince(pull({ events: [queued, kicked, merged], merged: true }), afterQueue)).toEqual([
+      { kind: "lifecycle", event: kicked },
+      { kind: "lifecycle", event: merged }
+    ])
+  })
+
+  it("records what already happened when it first sees a pull request, and does not repeat events it has seen", () => {
+    const both = pull({ events: [queued, merged], merged: true })
+
+    expect(changesSince(both, undefined)).toEqual([])
+    expect(changesSince(both, snapshotOf(both, undefined))).toEqual([])
+  })
+
+  it("catches an entry and an exit that both happened between two checks", () => {
+    const before = snapshotOf(pull(), undefined)
+
+    expect(
+      changesSince(pull({ events: [queued, kicked] }), before).map((change) =>
+        change.kind === "lifecycle" ? change.event.kind : change.kind
+      )
+    ).toEqual(["queued", "unqueued"])
+  })
+
+  it("does not call a merged pull request ready to merge", () => {
+    const done = pull({ decision: "APPROVED", checks: "passed", merged: true })
+
+    expect(changesSince(done, snapshotOf(pull(), undefined))).not.toContainEqual({ kind: "ready" })
+  })
+
+  it("needs you only when the pull request was kicked out of the queue, and always counts as lifecycle", () => {
+    expect([queued, kicked, merged].map((event) => needsYou({ kind: "lifecycle", event }))).toEqual([false, true, false])
+    expect(isLifecycle({ kind: "lifecycle", event: merged })).toBe(true)
+    expect(isLifecycle({ kind: "ready" })).toBe(false)
+  })
+})
+
+describe("anyNeedsYou", () => {
+  const change = (event: Lifecycle) => ({ kind: "lifecycle" as const, event })
+
+  it("needs you for a kick, unless the pull request merged in the same batch", () => {
+    expect(anyNeedsYou([change(queued), change(kicked)])).toBe(true)
+    expect(anyNeedsYou([change(queued), change(kicked), change(merged)])).toBe(false)
+  })
+
+  it("still needs you for a person's comment on a pull request that merged", () => {
+    expect(anyNeedsYou([change(merged), { kind: "item", item: item({ id: "a" }) }])).toBe(true)
   })
 })
 

@@ -61,6 +61,10 @@ prwatch status            # the pull requests being watched; ● marks the ones 
 prwatch ack acme/app#42   # clear the ● once you have looked
 ```
 
+### The merge queue and the merge
+
+prwatch tells you when one of your pull requests enters the merge queue, is removed from it, and merges. A removal carries the reason GitHub gives, such as `failed checks` or `manual`, and is marked as needing you; the removal GitHub also records when a pull request merges normally is not reported. A merge names the merge commit. The pull request stays in the poll for three days after it merges, so the merge is not missed and the deploy of its merge commit (a watch rule with `"link": "merge-commit"`, below) reaches the same pane.
+
 ### Pull requests you are reviewing
 
 prwatch also watches open pull requests you have commented on or reviewed but did not open. For those it delivers replies in review threads you are part of, comments that mention you, and new commits pushed after you looked.

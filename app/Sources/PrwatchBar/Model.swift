@@ -15,6 +15,8 @@ struct Pull: Decodable, Hashable, Identifiable {
   let decision: String?
   let mergeable: String?
   let comments: Int?
+  let queued: Bool?
+  let merged: Bool?
 
   var repo: String { String(key.split(separator: "#").first ?? "") }
   var number: String { String(key.split(separator: "#").last ?? "") }

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, DateTime, Duration, Effect, Layer, Option, Schema } from "effect"
 
 import {
   Branch,
@@ -46,6 +46,13 @@ export const Mergeable = Schema.Literals(["yes", "no", "unknown"])
 export const Role = Schema.Literals(["author", "reviewer"])
 export type Role = typeof Role.Type
 
+export const Lifecycle = Schema.Union([
+  Schema.Struct({ id: NodeId, kind: Schema.Literal("queued"), at: IsoTime }),
+  Schema.Struct({ id: NodeId, kind: Schema.Literal("unqueued"), at: IsoTime, reason: Text }),
+  Schema.Struct({ id: NodeId, kind: Schema.Literal("merged"), at: IsoTime, commit: Sha })
+])
+export type Lifecycle = typeof Lifecycle.Type
+
 export const PullRequest = Schema.Struct({
   id: NodeId,
   key: PrKey,
@@ -61,7 +68,10 @@ export const PullRequest = Schema.Struct({
   mergeable: Mergeable,
   role: Role,
   commits: Schema.Array(Sha),
-  items: Schema.Array(Item)
+  items: Schema.Array(Item),
+  queued: Schema.Boolean,
+  merged: Schema.Boolean,
+  events: Schema.Array(Lifecycle)
 })
 export type PullRequest = typeof PullRequest.Type
 
@@ -88,6 +98,12 @@ const CommentNode = Schema.Struct({
 
 const Rollup = Schema.NullOr(Schema.Struct({ state: StatusState }))
 
+const LifecycleNode = Schema.Union([
+  Schema.Struct({ __typename: Schema.Literal("AddedToMergeQueueEvent"), id: NodeId, createdAt: IsoTime }),
+  Schema.Struct({ __typename: Schema.Literal("RemovedFromMergeQueueEvent"), id: NodeId, createdAt: IsoTime, reason: Schema.NullOr(Text) }),
+  Schema.Struct({ __typename: Schema.Literal("MergedEvent"), id: NodeId, createdAt: IsoTime, commit: Schema.Struct({ oid: Sha }) })
+])
+
 const PullNode = Schema.Struct({
   id: NodeId,
   number: PrNumber,
@@ -97,6 +113,9 @@ const PullNode = Schema.Struct({
   isDraft: Schema.Boolean,
   mergeable: MergeableState,
   reviewDecision: Schema.NullOr(ReviewDecision),
+  isInMergeQueue: Schema.Boolean,
+  mergedAt: Schema.NullOr(IsoTime),
+  lifecycle: Nodes(LifecycleNode),
   repository: Schema.Struct({ nameWithOwner: RepoSlug, isPrivate: Schema.Boolean }),
   reviews: Nodes(
     Schema.Struct({
@@ -127,6 +146,9 @@ const StampNode = Schema.Struct({
   isDraft: Schema.Boolean,
   mergeable: MergeableState,
   reviewDecision: Schema.NullOr(ReviewDecision),
+  isInMergeQueue: Schema.Boolean,
+  mergedAt: Schema.NullOr(IsoTime),
+  lifecycle: Nodes(Schema.Struct({ id: NodeId })),
   repository: Schema.Struct({ isPrivate: Schema.Boolean }),
   latest: Nodes(Schema.Struct({ commit: Schema.Struct({ statusCheckRollup: Rollup }) }))
 })
@@ -136,7 +158,8 @@ const ResponseOf = <S extends Schema.Top>(node: S) =>
     data: Schema.Struct({
       viewer: Schema.Struct({
         login: Login,
-        pullRequests: Nodes(node)
+        pullRequests: Nodes(node),
+        merged: Nodes(node)
       }),
       commented: Nodes(Schema.Unknown),
       reviewed: Nodes(Schema.Unknown)
@@ -150,8 +173,18 @@ const ByIdResponse = Schema.Struct({
   })
 })
 
+const LIFECYCLE_TYPES = "[ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT, MERGED_EVENT]"
+
 const FIELDS = `
-  id number title url headRefName isDraft mergeable reviewDecision
+  id number title url headRefName isDraft mergeable reviewDecision isInMergeQueue mergedAt
+  lifecycle: timelineItems(last: 30, itemTypes: ${LIFECYCLE_TYPES}) {
+    nodes {
+      __typename
+      ... on AddedToMergeQueueEvent { id createdAt }
+      ... on RemovedFromMergeQueueEvent { id createdAt reason }
+      ... on MergedEvent { id createdAt commit { oid } }
+    }
+  }
   repository { nameWithOwner isPrivate }
   reviews(last: 30) { nodes { id state submittedAt body url author { login __typename } } }
   comments(last: 30) { nodes { id createdAt body url author { login __typename } } }
@@ -163,7 +196,10 @@ const FIELDS = `
 `
 
 const STAMP_FIELDS = `
-  id updatedAt headRefOid isDraft mergeable reviewDecision
+  id updatedAt headRefOid isDraft mergeable reviewDecision isInMergeQueue mergedAt
+  lifecycle: timelineItems(last: 1, itemTypes: ${LIFECYCLE_TYPES}) {
+    nodes { ... on AddedToMergeQueueEvent { id } ... on RemovedFromMergeQueueEvent { id } ... on MergedEvent { id } }
+  }
   repository { isPrivate }
   latest: commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 `
@@ -181,6 +217,7 @@ const queryOf = (fields: Fields) =>
   viewer {
     login
     pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${fields} } }
+    merged: pullRequests(states: MERGED, first: 10, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${fields} } }
   }
   ${reviewing("commented", "commenter:@me", fields)}
   ${reviewing("reviewed", "reviewed-by:@me", fields)}
@@ -240,6 +277,9 @@ const stampOf = ({ node, role }: { readonly node: typeof StampNode.Type; readonl
       node.isDraft,
       node.mergeable,
       node.reviewDecision,
+      node.isInMergeQueue,
+      node.mergedAt,
+      node.lifecycle.nodes[0]?.id,
       node.latest.nodes[0]?.commit.statusCheckRollup?.state
     ].join(" ")
   )
@@ -299,6 +339,22 @@ const relevant = (role: Role, viewer: Login) => (item: Item) => {
 
 const NO_HEAD = Sha.make("")
 
+const MERGED_FOR = Duration.days(3)
+
+const lifecycleOf = (nodes: typeof PullNode.Type.lifecycle.nodes): readonly Lifecycle[] =>
+  nodes.flatMap((node): readonly Lifecycle[] => {
+    if (node.__typename === "AddedToMergeQueueEvent") return [{ id: node.id, kind: "queued", at: node.createdAt }]
+    if (node.__typename === "MergedEvent") return [{ id: node.id, kind: "merged", at: node.createdAt, commit: node.commit.oid }]
+    if (node.reason === "merged") return []
+
+    return [{ id: node.id, kind: "unqueued", at: node.createdAt, reason: node.reason ?? Text.make("no reason given") }]
+  })
+
+const mergedWithin = (now: DateTime.Utc) => (pull: { readonly mergedAt: IsoTime | null }) =>
+  Option.exists(Option.flatMap(Option.fromNullishOr(pull.mergedAt), DateTime.make), (merged) =>
+    Duration.isLessThanOrEqualTo(DateTime.distance(merged, now), MERGED_FOR)
+  )
+
 const toPullRequest =
   (viewer: Login, role: Role) =>
   (pull: Pull): PullRequest => {
@@ -320,7 +376,10 @@ const toPullRequest =
       mergeable: mergeableOf(pull.mergeable),
       role,
       commits: pull.history.nodes.map((node) => node.commit.oid),
-      items: itemsOf(pull, viewer).filter(relevant(role, viewer))
+      items: itemsOf(pull, viewer).filter(relevant(role, viewer)),
+      queued: pull.isInMergeQueue,
+      merged: pull.mergedAt !== null,
+      events: role === "author" ? lifecycleOf(pull.lifecycle.nodes) : []
     }
   }
 
@@ -352,10 +411,11 @@ export class GitHub extends Context.Service<
 
       const pullRequests = graphql(QUERY).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(PullNode)))),
-        Effect.map(({ data }) => {
+        Effect.zip(DateTime.now),
+        Effect.map(([{ data }, now]) => {
           const viewer = data.viewer.login
           const pulls = withRoles(
-            data.viewer.pullRequests.nodes,
+            [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
             [...data.commented.nodes, ...data.reviewed.nodes],
             Schema.decodeUnknownOption(PullNode)
           ).map(({ node, role }) => toPullRequest(viewer, role)(node))
@@ -368,9 +428,10 @@ export class GitHub extends Context.Service<
 
       const stamps = graphql(PROBE).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(StampNode)))),
-        Effect.map(({ data }) =>
+        Effect.zip(DateTime.now),
+        Effect.map(([{ data }, now]) =>
           withRoles(
-            data.viewer.pullRequests.nodes,
+            [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
             [...data.commented.nodes, ...data.reviewed.nodes],
             Schema.decodeUnknownOption(StampNode)
           ).map(stampOf)
