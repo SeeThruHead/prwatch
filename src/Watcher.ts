@@ -1,12 +1,14 @@
 import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect"
 
 import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
+import { Gitea } from "./Gitea.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
 import {
   type AgentId,
   type Branch,
   Count,
+  type ForgeHost,
   type HostName,
   type IsoTime,
   type RepoSlug,
@@ -22,7 +24,12 @@ import type { StatusRun } from "./RunState.ts"
 import { type Claims, type Status, type StatusPull, Store } from "./Store.ts"
 import { Workspace } from "./Workspace.ts"
 
-export type Placed = Agent & { readonly repo: RepoSlug; readonly branch: Option.Option<Branch>; readonly commit: Sha }
+export type Placed = Agent & {
+  readonly host: ForgeHost
+  readonly repo: RepoSlug
+  readonly branch: Option.Option<Branch>
+  readonly commit: Sha
+}
 
 type Delivery = {
   readonly pull: PullRequest
@@ -40,6 +47,7 @@ const branchMatches = (pull: PullRequest, branch: Branch) => {
 }
 
 export const onBranch = (pull: PullRequest) => (agent: Placed) => {
+  if (agent.host !== pull.host) return false
   if (!sameRepo(agent.repo, pull.repo)) return false
   if (Option.exists(agent.branch, (branch) => branchMatches(pull, branch))) return true
 
@@ -129,7 +137,7 @@ export const statsOf = (pull: PullRequest) => ({
   ...(pull.merged ? { merged: true } : {})
 })
 
-const nextStatus = (
+export const nextStatus = (
   previous: Status | undefined,
   pulls: readonly PullRequest[],
   deliveries: readonly Delivery[],
@@ -192,6 +200,8 @@ export class Watcher extends Context.Service<
     Watcher,
     Effect.gen(function* () {
       const github = yield* GitHub
+      const gitea = yield* Gitea
+      const lastGitea = yield* Ref.make<readonly PullRequest[]>([])
       const host = yield* Host
       const workspace = yield* Workspace
       const store = yield* Store
@@ -312,8 +322,19 @@ export class Watcher extends Context.Service<
         return deliveries
       })
 
+      const giteaPulls = gitea.pullRequests.pipe(
+        Effect.tap(({ pulls }) => Ref.set(lastGitea, pulls)),
+        Effect.map(({ pulls }) => pulls),
+        Effect.catch((error) => Effect.andThen(Effect.logWarning(error.message), Ref.get(lastGitea)))
+      )
+
+      const allPulls = Effect.map(Effect.all([github.pullRequests, giteaPulls], { concurrency: 2 }), ([{ pulls }, others]) => ({
+        github: pulls,
+        pulls: [...pulls, ...others]
+      }))
+
       const cycle = Effect.fn("Watcher.cycle")(function* (options: Options) {
-        const { pulls } = yield* github.pullRequests
+        const { pulls } = yield* allPulls
         const delivered = yield* dispatch(pulls, options)
         const runs = yield* dispatchRuns(options)
 
@@ -339,16 +360,16 @@ export class Watcher extends Context.Service<
         const stamps = yield* github.stamps
 
         if (synced === undefined || Duration.isGreaterThanOrEqualTo(DateTime.distance(synced.at, now), interval)) {
-          const { pulls } = yield* github.pullRequests
-          yield* dispatch(pulls, options)
-          return yield* Ref.set(state, { at: now, stamps, pulls })
+          const read = yield* allPulls
+          yield* dispatch(read.pulls, options)
+          return yield* Ref.set(state, { at: now, stamps, pulls: read.github })
         }
 
         const moved = movedSince(synced, stamps)
         if (moved.length === 0 && stamps.length === synced.stamps.length) return
 
         const pulls = refreshed(synced, stamps, yield* github.pullsById(moved))
-        yield* dispatch(pulls, options)
+        yield* dispatch([...pulls, ...(yield* Ref.get(lastGitea))], options)
         yield* Ref.set(state, { at: synced.at, stamps, pulls })
       })
 

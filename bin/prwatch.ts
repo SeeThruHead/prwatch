@@ -10,6 +10,9 @@ import { RulesConfig } from "../src/Config.ts"
 import { describeRule } from "../src/Describe.ts"
 import { RunWatcher } from "../src/Runs.ts"
 import { Pending } from "../src/RunState.ts"
+import { FetchHttpClient } from "effect/http"
+
+import { Gitea } from "../src/Gitea.ts"
 import { GitHub } from "../src/GitHub.ts"
 import { callerSession, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
@@ -82,11 +85,15 @@ const hostLayer = (host: HostChoice) => {
   return Layer.unwrap(detectHost)
 }
 
+const sources = Layer.mergeAll(GitHub.layer, Gitea.layer).pipe(
+  Layer.provide(Layer.mergeAll(Shell.layer, Store.layer, FetchHttpClient.layer))
+)
+
 const runsLayer = RunWatcher.layer.pipe(Layer.provide(Layer.mergeAll(RulesConfig.layer, Activity.layer, Store.layer)))
 
 const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(
-    Layer.provide(Layer.mergeAll(GitHub.layer, Workspace.layer, Store.layer, runsLayer, withClaudeSessions(hostLayer(host)))),
+    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, runsLayer, withClaudeSessions(hostLayer(host)))),
     Layer.provide(Shell.layer)
   )
 
@@ -157,7 +164,7 @@ const status = Command.make("status", { json: Flag.Boolean("json").pipe(Flag.wit
   }).pipe(Effect.provide(Store.layer))
 ).pipe(Command.withDescription("show the pull requests being watched and which need you"))
 
-const PULL_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/
+const PULL_URL = /^https?:\/\/[^/]+\/([\w.-]+\/[\w.-]+)\/pulls?\/(\d+)/
 
 const pullKey = (input: Text) => {
   const url = PULL_URL.exec(input)

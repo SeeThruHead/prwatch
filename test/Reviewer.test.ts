@@ -2,7 +2,7 @@ import { Option } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { changesSince, snapshotOf } from "../src/Changes.ts"
-import { FilePath, Sha, Text, agentId, branch, repoSlug } from "../src/Brands.ts"
+import { FilePath, GITHUB, Sha, Text, agentId, branch, forgeHost, repoSlug } from "../src/Brands.ts"
 import { agentMessage } from "../src/Message.ts"
 import { type Placed, onBranch } from "../src/Watcher.ts"
 import { item, pull } from "./fixtures.ts"
@@ -14,6 +14,7 @@ const agent = (overrides: Partial<Placed>): Placed => ({
   cwd: FilePath.make("/work/app"),
   label: Text.make("claude in w1:p1"),
   status: "idle",
+  host: GITHUB,
   repo: repoSlug("acme/app"),
   branch: Option.none(),
   commit: Sha.make("abc1234def"),
@@ -52,5 +53,10 @@ describe("onBranch", () => {
     expect(onBranch(reviewing)(agent({ branch: Option.some(branch("pr-1")), commit: Sha.make("x") }))).toBe(true)
     expect(onBranch(reviewing)(agent({ branch: Option.some(branch("pr-12")), commit: Sha.make("x") }))).toBe(false)
     expect(onBranch(reviewing)(agent({ repo: repoSlug("acme/other") }))).toBe(false)
+  })
+
+  it("does not match the same owner/name on another host", () => {
+    const sameBranch = { branch: Option.some(branch("feature/thing")), commit: Sha.make("x") }
+    expect(onBranch(reviewing)(agent({ ...sameBranch, host: forgeHost(Text.make("gitea.example.lan")) }))).toBe(false)
   })
 })
