@@ -68,22 +68,26 @@ const answers = (command: "herdr" | "cmux" | "orca", args: readonly ("agent" | "
     )
   )
 
-const detectHost = Effect.gen(function* () {
-  if (yield* answers("herdr", ["agent", "list"])) return HerdrHost
-  if (yield* answers("cmux", ["ping"])) return CmuxHost
-  if (yield* answers("orca", ["terminal", "list", "--json"])) return OrcaHost
+type TerminalChoice = Exclude<HostChoice, "auto">
 
-  return TmuxHost
+const detectTerminal = Effect.gen(function* () {
+  if (yield* answers("herdr", ["agent", "list"])) return "herdr" as const
+  if (yield* answers("cmux", ["ping"])) return "cmux" as const
+  if (yield* answers("orca", ["terminal", "list", "--json"])) return "orca" as const
+
+  return "tmux" as const
 })
 
-const hostLayer = (host: HostChoice) => {
-  if (host === "herdr") return HerdrHost
-  if (host === "cmux") return CmuxHost
-  if (host === "orca") return OrcaHost
-  if (host === "tmux") return TmuxHost
+const terminalLayer = (terminal: Exclude<TerminalChoice, "herdr">) => {
+  if (terminal === "cmux") return CmuxHost
+  if (terminal === "orca") return OrcaHost
 
-  return Layer.unwrap(detectHost)
+  return TmuxHost
 }
+
+const deliveryLayer = (terminal: TerminalChoice) => (terminal === "herdr" ? HerdrHost : withClaudeSessions(terminalLayer(terminal)))
+
+const hostLayer = (host: HostChoice) => (host === "auto" ? Layer.unwrap(Effect.map(detectTerminal, deliveryLayer)) : deliveryLayer(host))
 
 const sources = Layer.mergeAll(GitHub.layer, Gitea.layer).pipe(
   Layer.provide(Layer.mergeAll(Shell.layer, Store.layer, FetchHttpClient.layer))
@@ -93,7 +97,7 @@ const runsLayer = RunWatcher.layer.pipe(Layer.provide(Layer.mergeAll(RulesConfig
 
 const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(
-    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, runsLayer, withClaudeSessions(hostLayer(host)))),
+    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, runsLayer, hostLayer(host))),
     Layer.provide(Shell.layer)
   )
 
