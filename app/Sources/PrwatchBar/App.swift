@@ -282,6 +282,7 @@ struct PullRow: View {
       Text(age(pull.lastAt, now: watch.now) ?? "")
         .font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing)
     }
+    .contentShape(Rectangle())
     .help(pull.key)
     .onTapGesture { expanded.toggle() }
   }
@@ -426,7 +427,6 @@ struct MenuContent: View {
   @ObservedObject var watch: Watch
   @ObservedObject var updater: Updater
   var openSettings: () -> Void = {}
-  @State private var listHeight: CGFloat = 0
 
   private var pulls: [Pull] { watch.status?.pulls ?? [] }
 
@@ -502,8 +502,7 @@ struct MenuContent: View {
         }
       }
       .fixedSize(horizontal: false, vertical: true)
-      .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { listHeight = $0 }
     }
-    .frame(height: min(listHeight, maxListHeight))
+    .frame(maxHeight: maxListHeight)
   }
 }
