@@ -1,6 +1,7 @@
 import { Context, Effect, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 
+import { Run } from "./Branches.ts"
 import { type Checks, type Item, PullRequest, mentions, relevant } from "./GitHub.ts"
 import {
   Branch,
@@ -13,6 +14,7 @@ import {
   PrNumber,
   RepoSlug,
   type ReviewState,
+  RunId,
   Sha,
   Text,
   Url,
@@ -76,6 +78,44 @@ const IssueComment = Schema.Struct({
 const CombinedStatus = Schema.Struct({ state: CommitState, total_count: Count })
 
 const CommitRef = Schema.Struct({ sha: Sha })
+
+const ActionRun = Schema.Struct({
+  id: RunId,
+  path: Text,
+  display_title: Text,
+  html_url: Url,
+  head_sha: Sha,
+  event: Text,
+  status: Text,
+  conclusion: Schema.optionalKey(Schema.NullOr(Text))
+})
+
+const ActionRuns = Schema.Struct({ workflow_runs: Schema.NullOr(Schema.Array(ActionRun)) })
+
+const ActionJobs = Schema.Struct({
+  jobs: Schema.NullOr(Schema.Array(Schema.Struct({ name: Text, conclusion: Schema.optionalKey(Schema.NullOr(Text)) })))
+})
+
+const outcomeOf = (conclusion: Text | null | undefined): Run["outcome"] => {
+  if (conclusion === "success") return "passed"
+  if (conclusion === "failure") return "failed"
+
+  return "other"
+}
+
+export const runOf = (run: typeof ActionRun.Type): Run => ({
+  id: run.id,
+  workflow: Text.make(run.path.replace(/@.*$/, "")),
+  title: run.display_title,
+  url: run.html_url,
+  head: run.head_sha,
+  event: run.event,
+  done: run.status === "completed",
+  outcome: outcomeOf(run.conclusion)
+})
+
+export const failedJobNames = (jobs: typeof ActionJobs.Type): readonly Text[] =>
+  (jobs.jobs ?? []).filter((job) => job.conclusion === "failure").map((job) => job.name)
 
 export const Fetched = Schema.Struct({
   repo: RepoSlug,
@@ -218,7 +258,12 @@ const uniqueHits = (hits: readonly Hit[], exclude: ReadonlySet<Text>) =>
 
 export class Gitea extends Context.Service<
   Gitea,
-  { readonly pullRequests: Effect.Effect<{ readonly viewer: Login; readonly pulls: readonly PullRequest[] }, GiteaUnavailable> }
+  {
+    readonly pullRequests: Effect.Effect<{ readonly viewer: Login; readonly pulls: readonly PullRequest[] }, GiteaUnavailable>
+    readonly host: Effect.Effect<Option.Option<ForgeHost>, GiteaUnavailable>
+    readonly runs: (repo: RepoSlug, branch: Branch) => Effect.Effect<readonly Run[], GiteaUnavailable>
+    readonly failedJobs: (repo: RepoSlug, run: RunId) => Effect.Effect<readonly Text[], GiteaUnavailable>
+  }
 >()("prwatch/Gitea") {
   static readonly layer = Layer.effect(
     Gitea,
@@ -240,8 +285,9 @@ export class Gitea extends Context.Service<
         return Option.some({ base: Url.make(parsed.url.replace(/\/+$/, "")), token: Redacted.make(parsed.token) })
       }).pipe(Effect.mapError(unavailable))
 
-      const fetchFrom = (base: Url, token: Redacted.Redacted<typeof GiteaConfig.Type.token>) => {
-        const get = <S extends Schema.Top & { readonly DecodingServices: never }>(
+      const getFrom =
+        (base: Url, token: Redacted.Redacted<typeof GiteaConfig.Type.token>) =>
+        <S extends Schema.Top & { readonly DecodingServices: never }>(
           route: Text,
           schema: S,
           urlParams: ReadonlyArray<readonly [Text, Text]> = []
@@ -249,6 +295,19 @@ export class Gitea extends Context.Service<
           http
             .get(`${base}/api/v1${route}`, { urlParams, headers: { authorization: `token ${Redacted.value(token)}` } })
             .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)), Effect.timeout("20 seconds"), Effect.mapError(unavailable))
+
+      const repoPath = (repo: RepoSlug) => Text.make(`/repos/${repo.split("/").map(encodeURIComponent).join("/")}`)
+
+      const configured = Effect.flatMap(
+        config,
+        Option.match({
+          onNone: () => Effect.fail(new GiteaUnavailable({ reason: Text.make("gitea.json is missing") })),
+          onSome: (found) => Effect.succeed({ ...found, get: getFrom(found.base, found.token) })
+        })
+      )
+
+      const fetchFrom = (base: Url, token: Redacted.Redacted<typeof GiteaConfig.Type.token>) => {
+        const get = getFrom(base, token)
 
         const search = (filter: Text) =>
           get(Text.make("/repos/issues/search"), Schema.Array(SearchHit), [
@@ -327,7 +386,28 @@ export class Gitea extends Context.Service<
         Effect.withSpan("Gitea.pullRequests")
       )
 
-      return Gitea.of({ pullRequests })
+      const host = Effect.map(
+        config,
+        Option.map(({ base }) => forgeHost(Text.make(new URL(base).host)))
+      )
+
+      const runs = Effect.fn("Gitea.runs")(function* (repo: RepoSlug, branch: Branch) {
+        const { get } = yield* configured
+        const read = yield* get(Text.make(`${repoPath(repo)}/actions/runs`), ActionRuns, [
+          [Text.make("branch"), Text.make(branch)],
+          [Text.make("limit"), Text.make("20")]
+        ])
+
+        return (read.workflow_runs ?? []).map(runOf)
+      })
+
+      const failedJobs = Effect.fn("Gitea.failedJobs")(function* (repo: RepoSlug, run: RunId) {
+        const { get } = yield* configured
+
+        return failedJobNames(yield* get(Text.make(`${repoPath(repo)}/actions/runs/${run}/jobs`), ActionJobs))
+      })
+
+      return Gitea.of({ pullRequests, host, runs, failedJobs })
     })
   )
 }

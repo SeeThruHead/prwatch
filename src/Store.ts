@@ -2,6 +2,7 @@ import { Config, Context, Effect, FileSystem, Layer, Path, Schema } from "effect
 
 import { AgentId, Count, FilePath, HostName, IsoTime, PrKey, ReviewDecision, Text, Url } from "./Brands.ts"
 import { Seen } from "./Changes.ts"
+import { SeenBranches } from "./Branches.ts"
 import { Checks, Mergeable, Role } from "./GitHub.ts"
 import { RunState, StatusRun } from "./RunState.ts"
 
@@ -46,7 +47,7 @@ export class StoreUnwritable extends Schema.TaggedError<StoreUnwritable>()("Stor
   }
 }
 
-type StoreFile = "seen.json" | "status.json" | "claims.json" | "runs.json"
+type StoreFile = "seen.json" | "status.json" | "claims.json" | "runs.json" | "branches.json"
 
 export class Store extends Context.Service<
   Store,
@@ -56,6 +57,8 @@ export class Store extends Context.Service<
     readonly saveSeen: (seen: Seen) => Effect.Effect<void, StoreUnwritable>
     readonly status: Effect.Effect<Status | undefined>
     readonly saveStatus: (status: Status) => Effect.Effect<void, StoreUnwritable>
+    readonly branches: Effect.Effect<SeenBranches>
+    readonly saveBranches: (branches: SeenBranches) => Effect.Effect<void, StoreUnwritable>
     readonly claims: Effect.Effect<Claims>
     readonly saveClaims: (claims: Claims) => Effect.Effect<void, StoreUnwritable>
     readonly runs: Effect.Effect<RunState | undefined>
@@ -96,6 +99,8 @@ export class Store extends Context.Service<
         saveSeen: (seen) => write("seen.json", Seen, seen),
         status: read("status.json", Status),
         saveStatus: (status) => write("status.json", Status, status),
+        branches: Effect.map(read("branches.json", SeenBranches), (branches) => branches ?? {}),
+        saveBranches: (branches) => write("branches.json", SeenBranches, branches),
         claims: Effect.map(read("claims.json", Claims), (claims) => claims ?? {}),
         saveClaims: (claims) => write("claims.json", Claims, claims),
         runs: read("runs.json", RunState),
