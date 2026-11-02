@@ -2,13 +2,15 @@ import { Option } from "effect"
 import { describe, expect, it } from "vitest"
 
 import type { Agent } from "../src/Host.ts"
-import { FilePath, IsoTime, Sha, Text, agentId, branch, repoSlug } from "../src/Brands.ts"
+import { FilePath, GITHUB, IsoTime, Sha, Text, agentId, branch, repoSlug } from "../src/Brands.ts"
 import { liveClaims, recipients } from "../src/Watcher.ts"
 import { pull } from "./fixtures.ts"
 
 const reviewer: Agent = { id: agentId("w1:p9"), cwd: FilePath.make("/elsewhere"), label: Text.make("claude in w1:p9"), status: "working" }
 const worktree: Agent = { id: agentId("w2:p1"), cwd: FilePath.make("/work/app"), label: Text.make("claude in w2:p1"), status: "idle" }
-const placed = [{ ...worktree, repo: repoSlug("acme/app"), branch: Option.some(branch("feature/thing")), commit: Sha.make("x") }]
+const placed = [
+  { ...worktree, host: GITHUB, repo: repoSlug("acme/app"), branch: Option.some(branch("feature/thing")), commit: Sha.make("x") }
+]
 const keepSince = IsoTime.make("2025-12-30T00:00:00Z")
 const claims = { "acme/app#1": [{ agent: "w1:p9", at: "2026-01-01T00:00:00Z" }] }
 

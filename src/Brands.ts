@@ -9,6 +9,9 @@ export type RepoSlug = typeof RepoSlug.Type
 export const Branch = Schema.NonEmptyString.pipe(Schema.brand("Branch"))
 export type Branch = typeof Branch.Type
 
+export const ForgeHost = Schema.NonEmptyString.pipe(Schema.brand("ForgeHost"))
+export type ForgeHost = typeof ForgeHost.Type
+
 export const AgentId = Schema.NonEmptyString.pipe(Schema.brand("AgentId"))
 export type AgentId = typeof AgentId.Type
 
@@ -114,6 +117,10 @@ export type Hostname = typeof Hostname.Type
 export const repoSlug = Schema.decodeSync(RepoSlug)
 export const branch = Schema.decodeSync(Branch)
 export const agentId = Schema.decodeSync(AgentId)
+
+export const forgeHost = (host: Text): ForgeHost => ForgeHost.make(host.toLowerCase())
+
+export const GITHUB = forgeHost(Text.make("github.com"))
 
 export const prKey = (repo: RepoSlug, number: PrNumber): PrKey => PrKey.make(`${repo}#${number}`)
 

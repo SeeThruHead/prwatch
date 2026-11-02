@@ -1,7 +1,7 @@
 import { Option } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { FilePath, IsoTime, PrKey, RuleName, Sha, Text, agentId, branch, repoSlug } from "../src/Brands.ts"
+import { FilePath, IsoTime, PrKey, RuleName, Sha, Text, agentId, branch, repoSlug, GITHUB } from "../src/Brands.ts"
 import type { Agent } from "../src/Host.ts"
 import { runMessage, runNotification } from "../src/Message.ts"
 import type { RunDelivery } from "../src/Runs.ts"
@@ -16,6 +16,7 @@ const pane = (id: string, status: Agent["status"] = "idle"): Agent => ({
 })
 const placed = (agent: Agent, name: string | undefined, commit = "0000000") => ({
   ...agent,
+  host: GITHUB,
   repo: repoSlug("acme/shop"),
   branch: name === undefined ? Option.none() : Option.some(branch(name)),
   commit: Sha.make(commit)

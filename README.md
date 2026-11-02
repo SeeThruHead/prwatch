@@ -138,6 +138,12 @@ The menu bar app lists recent runs next to your pull requests, and **Rules…** 
 
 State lives in `~/.prwatch` (`PRWATCH_HOME` to change it): `seen.json` for what has already been delivered, `runs.json` for the runs being followed and `status.json` for tools such as a menu bar app.
 
+## Gitea
+
+prwatch reads pull requests from a Gitea server as well as GitHub when `~/.prwatch/gitea.json` names it: `{"url": "https://gitea.example", "token": "<token with read access>"}`. An agent is matched to a Gitea pull request by the host of its checkout's `origin` remote, so the same owner/name on GitHub and on Gitea never mix. If Gitea can't be reached, its pull requests keep their last known state until it answers again.
+
+On Gitea it also watches the branch each agent is on when that branch has no open pull request, which is how repositories that push straight to main get CI feedback. A newly failed Actions run, with its failed jobs, and a workflow passing again arrive as `[prwatch] owner/repo branch <name> has CI updates:` within one probe. The first look at a branch only records what is there.
+
 ## Development
 
 ```sh

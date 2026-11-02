@@ -10,6 +10,8 @@ mkdir -p build
 
 echo "Compiling the prwatch CLI with Bun..."
 bun build bin/prwatch.ts --compile --minify --outfile build/prwatch
+codesign --remove-signature build/prwatch
+codesign --force --sign - build/prwatch
 
 echo "Building the menu bar app..."
 swift build -c release --package-path app

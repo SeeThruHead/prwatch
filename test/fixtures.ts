@@ -18,6 +18,7 @@ export const pull = (overrides: Partial<typeof PullRequest.Encoded> = {}): PullR
   Schema.decodeUnknownSync(PullRequest)({
     id: "PR_1",
     key: "acme/app#1",
+    host: "github.com",
     repo: "acme/app",
     number: 1,
     title: "Add the thing",

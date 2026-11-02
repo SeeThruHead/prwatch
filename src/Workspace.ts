@@ -1,21 +1,32 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 
-import { Branch, FilePath, RepoSlug, Sha, Url } from "./Brands.ts"
+import { Branch, type FilePath, type ForgeHost, RepoSlug, Sha, Text, Url, forgeHost } from "./Brands.ts"
 import { Shell } from "./Shell.ts"
 
-const SLUG = /github\.com[:/]+([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/
+const REMOTE = /^(?:[a-z+]+:\/\/)?(?:[^@/\s]+@)?([^:/\s]+)(?::\d+)?[:/]+([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i
 
-export const slugFromRemote = (url: Url) =>
-  Option.flatMap(Option.fromNullishOr(SLUG.exec(url.trim())?.[1]), Schema.decodeUnknownOption(RepoSlug))
+export const remoteOf = (url: Url): Option.Option<{ readonly host: ForgeHost; readonly repo: RepoSlug }> => {
+  const match = REMOTE.exec(url.trim())
+  const host = match?.[1]
+  const slug = match?.[2]
+  if (host === undefined || slug === undefined) return Option.none()
+
+  return Option.map(Schema.decodeUnknownOption(RepoSlug)(slug), (repo) => ({ host: forgeHost(Text.make(host)), repo }))
+}
 
 type GitArg = "remote" | "get-url" | "origin" | "rev-parse" | "--abbrev-ref" | "HEAD"
 
 export class Workspace extends Context.Service<
   Workspace,
   {
-    readonly locate: (
-      cwd: FilePath
-    ) => Effect.Effect<Option.Option<{ readonly repo: RepoSlug; readonly branch: Option.Option<Branch>; readonly commit: Sha }>>
+    readonly locate: (cwd: FilePath) => Effect.Effect<
+      Option.Option<{
+        readonly host: ForgeHost
+        readonly repo: RepoSlug
+        readonly branch: Option.Option<Branch>
+        readonly commit: Sha
+      }>
+    >
   }
 >()("prwatch/Workspace") {
   static readonly layer = Layer.effect(
@@ -32,7 +43,7 @@ export class Workspace extends Context.Service<
         )
         const branch = head === "HEAD" ? Option.none() : Schema.decodeUnknownOption(Branch)(head)
 
-        return Option.map(slugFromRemote(Url.make(remote)), (repo) => ({ repo, branch, commit: Sha.make(commit) }))
+        return Option.map(remoteOf(Url.make(remote)), (where) => ({ ...where, branch, commit: Sha.make(commit) }))
       }, Effect.orElseSucceed(Option.none))
 
       return Workspace.of({ locate })

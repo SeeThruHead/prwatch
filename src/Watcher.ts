@@ -1,12 +1,15 @@
 import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect"
 
+import { type BranchChange, type BranchKey, type Pending, type SeenBranches, branchChanges, branchKey } from "./Branches.ts"
 import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
+import { Gitea } from "./Gitea.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
 import {
   type AgentId,
   type Branch,
   Count,
+  type ForgeHost,
   type HostName,
   type IsoTime,
   type RepoSlug,
@@ -16,13 +19,28 @@ import {
   isoTime,
   sameRepo
 } from "./Brands.ts"
-import { RUN_INSTRUCTIONS, agentMessage, notification, runMessage, runNotification, summary } from "./Message.ts"
+import {
+  BRANCH_INSTRUCTIONS,
+  RUN_INSTRUCTIONS,
+  agentMessage,
+  branchMessage,
+  branchNotification,
+  notification,
+  runMessage,
+  runNotification,
+  summary
+} from "./Message.ts"
 import { type RunDelivery, RunWatcher } from "./Runs.ts"
 import type { StatusRun } from "./RunState.ts"
 import { type Claims, type Status, type StatusPull, Store } from "./Store.ts"
 import { Workspace } from "./Workspace.ts"
 
-export type Placed = Agent & { readonly repo: RepoSlug; readonly branch: Option.Option<Branch>; readonly commit: Sha }
+export type Placed = Agent & {
+  readonly host: ForgeHost
+  readonly repo: RepoSlug
+  readonly branch: Option.Option<Branch>
+  readonly commit: Sha
+}
 
 type Delivery = {
   readonly pull: PullRequest
@@ -40,6 +58,7 @@ const branchMatches = (pull: PullRequest, branch: Branch) => {
 }
 
 export const onBranch = (pull: PullRequest) => (agent: Placed) => {
+  if (agent.host !== pull.host) return false
   if (!sameRepo(agent.repo, pull.repo)) return false
   if (Option.exists(agent.branch, (branch) => branchMatches(pull, branch))) return true
 
@@ -90,6 +109,44 @@ const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Foun
     return [{ pull, changes, agents: recipients(pull, found, claims), needsYou: anyNeedsYou(changes) }]
   })
 
+export type BranchTarget = {
+  readonly key: BranchKey
+  readonly host: ForgeHost
+  readonly repo: RepoSlug
+  readonly branch: Branch
+  readonly agents: readonly Placed[]
+}
+
+const hasPull = (pulls: readonly PullRequest[], agent: Placed, branch: Branch) =>
+  pulls.some((pull) => pull.host === agent.host && sameRepo(pull.repo, agent.repo) && branchMatches(pull, branch))
+
+const joinTarget = (targets: readonly BranchTarget[], target: BranchTarget): readonly BranchTarget[] => {
+  if (!targets.some((existing) => existing.key === target.key)) return [...targets, target]
+
+  return targets.map((existing) =>
+    existing.key === target.key ? { ...existing, agents: [...existing.agents, ...target.agents] } : existing
+  )
+}
+
+export const branchTargets = (placed: readonly Placed[], pulls: readonly PullRequest[], host: ForgeHost): readonly BranchTarget[] => {
+  const single = placed.flatMap((agent): readonly BranchTarget[] =>
+    Option.match(agent.branch, {
+      onNone: () => [],
+      onSome: (branch) =>
+        agent.host === host && !hasPull(pulls, agent, branch)
+          ? [{ key: branchKey(agent.host, agent.repo, branch), host, repo: agent.repo, branch, agents: [agent] }]
+          : []
+    })
+  )
+
+  return single.reduce<readonly BranchTarget[]>(joinTarget, [])
+}
+
+export const keptBranches = (seen: SeenBranches, targets: readonly BranchTarget[], read: SeenBranches): SeenBranches => ({
+  ...Object.fromEntries(targets.flatMap((target) => Object.entries(seen).filter(([key]) => key === target.key))),
+  ...read
+})
+
 const CLAIM_AFTER_CLOSE = Duration.days(3)
 
 export const liveClaims = (claims: Claims, pulls: readonly PullRequest[], agents: readonly Agent[], keepSince: IsoTime): Claims => {
@@ -129,7 +186,7 @@ export const statsOf = (pull: PullRequest) => ({
   ...(pull.merged ? { merged: true } : {})
 })
 
-const nextStatus = (
+export const nextStatus = (
   previous: Status | undefined,
   pulls: readonly PullRequest[],
   deliveries: readonly Delivery[],
@@ -192,6 +249,8 @@ export class Watcher extends Context.Service<
     Watcher,
     Effect.gen(function* () {
       const github = yield* GitHub
+      const gitea = yield* Gitea
+      const lastGitea = yield* Ref.make<readonly PullRequest[]>([])
       const host = yield* Host
       const workspace = yield* Workspace
       const store = yield* Store
@@ -243,6 +302,77 @@ export class Watcher extends Context.Service<
           }
         )
         if (alert) yield* host.notify(title, body)
+      })
+
+      const withJobs = (target: BranchTarget, change: Pending) =>
+        change.kind === "fixed"
+          ? Effect.succeed<BranchChange>({ kind: "fixed", run: change.run })
+          : Effect.map(gitea.failedJobs(target.repo, change.run.id).pipe(Effect.orElseSucceed(() => [])), (jobs): BranchChange => ({
+              kind: "failed",
+              run: change.run,
+              jobs
+            }))
+
+      const readBranch = Effect.fn("Watcher.readBranch")(function* (target: BranchTarget, seen: SeenBranches) {
+        const runs = yield* gitea.runs(target.repo, target.branch)
+        const { changes, next } = branchChanges(runs, seen[target.key])
+        const detailed = yield* Effect.forEach(changes, (change) => withJobs(target, change), { concurrency: 4 })
+
+        return { target, changes: detailed, next }
+      })
+
+      const sendBranch = Effect.fn("Watcher.sendBranch")(function* (
+        target: BranchTarget,
+        changes: readonly BranchChange[],
+        dryRun: boolean
+      ) {
+        const agents = target.agents.filter(reachable)
+        const message = branchMessage(target, changes, BRANCH_INSTRUCTIONS)
+        const { title, body } = branchNotification(target, changes)
+
+        if (dryRun)
+          return yield* Effect.log(
+            `[dry run] to ${agents.map((agent) => agent.label).join(", ") || "nobody"}${agents.length === 0 ? " + notify" : ""}\n${message}`
+          )
+
+        yield* Effect.forEach(
+          agents,
+          (agent) =>
+            host.deliver(agent.id, message).pipe(
+              Effect.tapError((error) => Effect.logWarning(error.message)),
+              Effect.ignore
+            ),
+          { discard: true }
+        )
+        if (agents.length === 0) yield* host.notify(title, body)
+      })
+
+      const branches = Effect.fn("Watcher.branches")(function* (found: Found, pulls: readonly PullRequest[], dryRun: boolean) {
+        const giteaHost = yield* gitea.host
+        if (Option.isNone(giteaHost)) return
+        if (found.agents.length === 0) return
+
+        const targets = branchTargets(found.placed, pulls, giteaHost.value)
+        const seen = yield* store.branches
+        const reads = yield* Effect.forEach(
+          targets,
+          (target) =>
+            readBranch(target, seen).pipe(
+              Effect.tapError((error) => Effect.logWarning(error.message)),
+              Effect.option
+            ),
+          { concurrency: 4 }
+        )
+        const read = reads.flatMap(Option.toArray)
+
+        yield* Effect.forEach(
+          read.filter((entry) => entry.changes.length > 0),
+          (entry) => sendBranch(entry.target, entry.changes, dryRun),
+          { discard: true }
+        )
+        if (dryRun) return
+
+        yield* store.saveBranches(keptBranches(seen, targets, Object.fromEntries(read.map((entry) => [entry.target.key, entry.next]))))
       })
 
       const dispatch = Effect.fn("Watcher.dispatch")(function* (pulls: readonly PullRequest[], options: Options) {
@@ -312,9 +442,27 @@ export class Watcher extends Context.Service<
         return deliveries
       })
 
+      const giteaPulls = gitea.pullRequests.pipe(
+        Effect.tap(({ pulls }) => Ref.set(lastGitea, pulls)),
+        Effect.map(({ pulls }) => pulls),
+        Effect.catch((error) => Effect.andThen(Effect.logWarning(error.message), Ref.get(lastGitea)))
+      )
+
+      const allPulls = Effect.map(Effect.all([github.pullRequests, giteaPulls], { concurrency: 2 }), ([{ pulls }, others]) => ({
+        github: pulls,
+        pulls: [...pulls, ...others]
+      }))
+
+      const checkBranches = (pulls: readonly PullRequest[], options: Options) =>
+        Effect.flatMap(placed(), (found) => branches(found, pulls, options.dryRun)).pipe(
+          Effect.tapError((error) => Effect.logWarning(error.message)),
+          Effect.ignore
+        )
+
       const cycle = Effect.fn("Watcher.cycle")(function* (options: Options) {
-        const { pulls } = yield* github.pullRequests
+        const { pulls } = yield* allPulls
         const delivered = yield* dispatch(pulls, options)
+        yield* checkBranches(pulls, options)
         const runs = yield* dispatchRuns(options)
 
         return { pulls: delivered, runs }
@@ -339,16 +487,20 @@ export class Watcher extends Context.Service<
         const stamps = yield* github.stamps
 
         if (synced === undefined || Duration.isGreaterThanOrEqualTo(DateTime.distance(synced.at, now), interval)) {
-          const { pulls } = yield* github.pullRequests
-          yield* dispatch(pulls, options)
-          return yield* Ref.set(state, { at: now, stamps, pulls })
+          const read = yield* allPulls
+          yield* dispatch(read.pulls, options)
+          yield* checkBranches(read.pulls, options)
+          return yield* Ref.set(state, { at: now, stamps, pulls: read.github })
         }
 
         const moved = movedSince(synced, stamps)
-        if (moved.length === 0 && stamps.length === synced.stamps.length) return
+        if (moved.length === 0 && stamps.length === synced.stamps.length)
+          return yield* checkBranches([...synced.pulls, ...(yield* Ref.get(lastGitea))], options)
 
         const pulls = refreshed(synced, stamps, yield* github.pullsById(moved))
-        yield* dispatch(pulls, options)
+        const all = [...pulls, ...(yield* Ref.get(lastGitea))]
+        yield* dispatch(all, options)
+        yield* checkBranches(all, options)
         yield* Ref.set(state, { at: synced.at, stamps, pulls })
       })
 

@@ -4,6 +4,8 @@ import {
   Branch,
   FilePath,
   Fingerprint,
+  ForgeHost,
+  GITHUB,
   IsoTime,
   LineNumber,
   Login,
@@ -56,6 +58,7 @@ export type Lifecycle = typeof Lifecycle.Type
 export const PullRequest = Schema.Struct({
   id: NodeId,
   key: PrKey,
+  host: ForgeHost,
   repo: RepoSlug,
   number: PrNumber,
   title: Text,
@@ -285,7 +288,7 @@ const stampOf = ({ node, role }: { readonly node: typeof StampNode.Type; readonl
   )
 })
 
-const mentions = (body: Markdown, viewer: Login) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
+export const mentions = (body: Markdown, viewer: Login) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
 
 const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
   ...pull.reviews.nodes.flatMap((review) =>
@@ -330,7 +333,7 @@ const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
   })
 ]
 
-const relevant = (role: Role, viewer: Login) => (item: Item) => {
+export const relevant = (role: Role, viewer: Login) => (item: Item) => {
   if (item.author === viewer) return false
   if (role === "author") return true
 
@@ -364,6 +367,7 @@ const toPullRequest =
     return {
       id: pull.id,
       key: prKey(repo, pull.number),
+      host: GITHUB,
       repo,
       number: pull.number,
       title: pull.title,
