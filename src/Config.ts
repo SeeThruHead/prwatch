@@ -5,7 +5,8 @@ import { Config, Context, Effect, FileSystem, Layer, Path, Schema } from "effect
 import { FilePath, Hostname, Text } from "./Brands.ts"
 import { globsMatch, lastBy } from "./Fields.ts"
 import { problems } from "./Matcher.ts"
-import { type Rule, WatchRules } from "./Rules.ts"
+import { DEFAULT_DELIVERY } from "./Delivery.ts"
+import { type Delivery, type Rule, WatchRules } from "./Rules.ts"
 
 export class RulesInvalid extends Schema.TaggedError<RulesInvalid>()("RulesInvalid", { reasons: Schema.Array(Text) }) {
   override get message() {
@@ -27,6 +28,7 @@ export class RulesConfig extends Context.Service<
     readonly machine: Hostname
     readonly files: readonly FilePath[]
     readonly load: Effect.Effect<readonly Located[], RulesInvalid>
+    readonly delivery: Effect.Effect<Delivery, RulesInvalid>
   }
 >()("prwatch/RulesConfig") {
   static readonly layer = Layer.effect(
@@ -42,16 +44,17 @@ export class RulesConfig extends Context.Service<
 
       const invalid = (file: FilePath) => (error: Error) => new RulesInvalid({ reasons: [Text.make(`${file}: ${error.message}`)] })
 
-      const rulesIn = Effect.fn("RulesConfig.rulesIn")(function* (file: FilePath) {
-        if (!(yield* fs.exists(file).pipe(Effect.mapError(invalid(file))))) return []
+      const read = Effect.fn("RulesConfig.read")(function* (file: FilePath) {
+        if (!(yield* fs.exists(file).pipe(Effect.mapError(invalid(file))))) return undefined
 
         const text = yield* fs.readFileString(file).pipe(Effect.mapError(invalid(file)))
-        const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(WatchRules))(text, { onExcessProperty: "error" }).pipe(
+        return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(WatchRules))(text, { onExcessProperty: "error" }).pipe(
           Effect.mapError(invalid(file))
         )
-
-        return decoded.rules.map((rule): Located => ({ rule, file }))
       })
+
+      const rulesIn = (file: FilePath) =>
+        Effect.map(read(file), (decoded) => (decoded?.rules ?? []).map((rule): Located => ({ rule, file })))
 
       const merged = (lists: readonly (readonly Located[])[]) => lastBy(lists.flat(), (entry) => entry.rule.name)
 
@@ -63,7 +66,12 @@ export class RulesConfig extends Context.Service<
         return located
       }).pipe(Effect.withSpan("RulesConfig.load"))
 
-      return RulesConfig.of({ dir, machine, files, load })
+      const delivery = Effect.forEach(files, read).pipe(
+        Effect.map((decoded) => decoded.findLast((entry) => entry?.delivery !== undefined)?.delivery ?? DEFAULT_DELIVERY),
+        Effect.withSpan("RulesConfig.delivery")
+      )
+
+      return RulesConfig.of({ dir, machine, files, load, delivery })
     })
   )
 }

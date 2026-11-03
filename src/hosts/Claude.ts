@@ -3,6 +3,7 @@ import { createConnection } from "node:net"
 
 import { type Agent, DeliveryFailed, Host } from "../Host.ts"
 import { AgentId, FilePath, Text } from "../Brands.ts"
+import { type SocketOrder } from "../Delivery.ts"
 import { Shell } from "../Shell.ts"
 
 const NAME = "claude" as const
@@ -63,17 +64,31 @@ const soleClaudePaneAt = (session: Agent, sessions: readonly Agent[], terminals:
   return unknown.length === 1 && sessions.filter(here).length === 1 ? unknown[0] : undefined
 }
 
-export const preferPanes = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Agent[] => {
-  const holders = sessions.map((session) => ({
+type Pairing = { readonly session: Agent; readonly pane: Agent | undefined }
+
+const pairings = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Pairing[] =>
+  sessions.map((session) => ({
     session,
     pane: terminals.find(holdsSession(session.id)) ?? soleClaudePaneAt(session, sessions, terminals)
   }))
+
+export const preferPanes = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Agent[] => {
+  const holders = pairings(sessions, terminals)
   const withSessions = (terminal: Agent) => {
     const held = holders.filter((holder) => holder.pane === terminal).map((holder) => holder.session.id)
     return held.length === 0 ? terminal : { ...terminal, aliases: [...(terminal.aliases ?? []), ...held] }
   }
 
   return [...terminals.map(withSessions), ...holders.filter((holder) => holder.pane === undefined).map((holder) => holder.session)]
+}
+
+export const preferSessions = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Agent[] => {
+  const holders = pairings(sessions, terminals)
+  const withPanes = (holder: Pairing) =>
+    holder.pane === undefined ? holder.session : { ...holder.session, aliases: [...(holder.session.aliases ?? []), holder.pane.id] }
+  const replaced = new Set(holders.flatMap((holder) => (holder.pane === undefined ? [] : [holder.pane])))
+
+  return [...holders.map(withPanes), ...terminals.filter((terminal) => !replaced.has(terminal))]
 }
 
 export type Caller = { readonly agent: AgentId; readonly cwd: Option.Option<FilePath> }
@@ -86,13 +101,22 @@ const isThisPane = (caller: Caller, pane: AgentId) => (terminal: Agent) => {
   return Option.match(caller.cwd, { onNone: () => true, onSome: (cwd) => cwd === terminal.cwd })
 }
 
-export const claimTarget = (caller: Caller, pane: Option.Option<AgentId>, terminals: readonly Agent[]): AgentId => {
+export const claimTarget = (
+  caller: Caller,
+  pane: Option.Option<AgentId>,
+  terminals: readonly Agent[],
+  socket: SocketOrder
+): Option.Option<AgentId> => {
+  if (socket === "first") return Option.some(caller.agent)
+
   const holding = terminals.find(holdsSession(caller.agent))
-  if (holding !== undefined) return holding.id
-
   const own = Option.flatMap(pane, (id) => Option.fromNullishOr(terminals.find(isThisPane(caller, id))))
+  const inPane = Option.map(
+    Option.orElse(Option.fromNullishOr(holding), () => own),
+    (terminal) => terminal.id
+  )
 
-  return Option.match(own, { onNone: () => caller.agent, onSome: (terminal) => terminal.id })
+  return socket === "last" ? Option.orElse(inPane, () => Option.some(caller.agent)) : inPane
 }
 
 export const inboxLines = (text: Text) => `${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`
@@ -144,7 +168,7 @@ const post = (socketPath: FilePath, text: Text) =>
     return Effect.sync(() => connection.destroy())
   }).pipe(Effect.timeout(SEND_TIMEOUT))
 
-export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>) =>
+export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>, socket: Exclude<SocketOrder, "off">) =>
   Layer.effect(
     Host,
     Effect.gen(function* () {
@@ -172,7 +196,7 @@ export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>) =>
           Effect.catchTag("HostUnavailable", (error) => (live.length > 0 ? Effect.succeed([]) : Effect.fail(error)))
         )
 
-        return preferPanes(live, terminals)
+        return socket === "last" ? preferPanes(live, terminals) : preferSessions(live, terminals)
       })
 
       const failed = (agent: AgentId, reason: Text) => new DeliveryFailed({ host: NAME, agent, reason })

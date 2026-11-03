@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect"
 
 import {
   CommandLine,
+  HostName,
   ExtractedKind,
   FieldPath,
   Glob,
@@ -52,5 +53,11 @@ export const Rule = Schema.Struct({
 })
 export type Rule = typeof Rule.Type
 
-export const WatchRules = Schema.Struct({ rules: Schema.Array(Rule) })
+export const Delivery = Schema.NonEmptyArray(HostName)
+export type Delivery = typeof Delivery.Type
+
+export const WatchRules = Schema.Struct({
+  rules: Schema.Array(Rule).pipe(Schema.withDecodingDefault(Effect.succeed<readonly Rule[]>([]))),
+  delivery: Schema.optionalKey(Delivery)
+})
 export type WatchRules = typeof WatchRules.Type

@@ -34,7 +34,7 @@ node bin/prwatch.ts run
 
 ## Claude Code sessions
 
-A Claude Code session is delivered to through its multiplexer pane whenever one holds it: herdr, cmux, Orca, then tmux, whichever host has a pane for it. Its inbox socket is the last resort, used only for a session with no pane anywhere (a plain terminal or a background session). prwatch finds sessions with `claude agents --json` and pairs each with the pane that holds it: herdr reports the session id of each pane, and for the other hosts the only Claude pane in the session's directory is the session's. A pane that holds a session also answers to the claims made for that session, so a `claude:<session id>` claim from an older version is delivered through the pane too. For a session with no pane, prwatch posts to its inbox socket, the one Claude Code uses for [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging).
+A Claude Code session is delivered to through its multiplexer pane whenever one holds it: herdr, cmux, Orca, then tmux, whichever host has a pane for it (the order is configurable, see [Delivery order](#delivery-order)). Its inbox socket is the last resort, used only for a session with no pane anywhere (a plain terminal or a background session). prwatch finds sessions with `claude agents --json` and pairs each with the pane that holds it: herdr reports the session id of each pane, and for the other hosts the only Claude pane in the session's directory is the session's. A pane that holds a session also answers to the claims made for that session, so a `claude:<session id>` claim from an older version is delivered through the pane too. For a session with no pane, prwatch posts to its inbox socket, the one Claude Code uses for [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging).
 
 A session that bypasses permission prompts holds a message from outside Claude Code for your approval, which is why the socket comes last. To let socket messages through without a prompt each time, set `"crossSessionInbound": "accept"` in `~/.claude/settings.json`. That accepts messages from your other local sessions too.
 
@@ -91,6 +91,20 @@ Notifications on herdr are silent. Set `PRWATCH_NOTIFY_SOUND` to `done` or `requ
 Pull requests are not the only thing worth hearing about. A deploy you started finishes long after the pull request closed, and a preview dispatched from a portal belongs to a pull request without being a check on it. Watch rules tell prwatch which of these to follow and whose they are. With no rules, nothing changes.
 
 Rules live in `config.json` and `config.local.json` in `~/.config/prwatch` (`PRWATCH_CONFIG_DIR` to change it). Keep `config.json` where your dotfiles are tracked and `config.local.json` for one machine; a rule in the local file replaces the shared rule with the same name. A rule applies only on machines whose name matches `machines` (`PRWATCH_MACHINE`, default the hostname).
+
+### Delivery order
+
+The same `config.json` (and `config.local.json` for one machine, which replaces it) can say which hosts prwatch delivers through, in order:
+
+```json
+{ "delivery": ["herdr", "cmux", "orca", "tmux", "claude"] }
+```
+
+That list is the default when `delivery` is unset: the multiplexers first, and Claude Code's inbox socket (`claude`) last. prwatch uses the first listed multiplexer that answers, and looks for an agent's pane there. A Claude Code session with no pane goes to its inbox socket.
+
+- Leave `claude` out and a session is only ever delivered to through a pane. A session with no pane gets nothing, and `prwatch claim` says so instead of recording a claim that can't be delivered.
+- Put `claude` before every multiplexer to prefer the socket: sessions are messaged directly and `prwatch claim` records the session.
+- An unknown name, such as `zellij`, is rejected with the file, the position and the allowed names (`herdr`, `cmux`, `orca`, `tmux`, `claude`). The list can't be empty. `--host` still overrides the multiplexer for one run.
 
 ```json
 {

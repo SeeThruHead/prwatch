@@ -7,6 +7,7 @@ import { Activity } from "../src/Activity.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
 import { FilePath, agentId } from "../src/Brands.ts"
 import { RulesConfig } from "../src/Config.ts"
+import { DEFAULT_DELIVERY } from "../src/Delivery.ts"
 import type { PullFact } from "../src/Linking.ts"
 import type { Occurrence } from "../src/Occurrence.ts"
 import { RunWatcher, advance, initial, sourcesByRepo } from "../src/Runs.ts"
@@ -32,6 +33,7 @@ const harness = (
         dir: FilePath.make(dir),
         machine: host,
         files: [],
+        delivery: Effect.succeed(DEFAULT_DELIVERY),
         load: Effect.succeed(rules.map((entry) => ({ rule: entry, file: FilePath.make(`${dir}/config.json`) })))
       })
     )
