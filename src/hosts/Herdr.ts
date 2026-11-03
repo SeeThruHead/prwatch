@@ -1,6 +1,6 @@
 import { Config, Effect, Layer, Schema } from "effect"
 
-import { DeliveryFailed, Host, HostUnavailable } from "../Host.ts"
+import { type Agent, DeliveryFailed, Host, HostUnavailable } from "../Host.ts"
 import { AgentId, FilePath, NotifySound, Text } from "../Brands.ts"
 import { Shell } from "../Shell.ts"
 
@@ -14,6 +14,7 @@ const AgentList = Schema.Struct({
         agent_status: HerdrStatus,
         cwd: FilePath,
         pane_id: AgentId,
+        agent_session: Schema.optionalKey(Schema.NullOr(Schema.Struct({ value: Text }))),
         terminal_title_stripped: Schema.optionalKey(Text)
       })
     )
@@ -30,6 +31,18 @@ const statusOf = (status: typeof HerdrStatus.Type) => {
 
 const NAME = "herdr" as const
 
+export const agentsOf = ({ result }: typeof AgentList.Type): readonly Agent[] =>
+  result.agents.map((agent) => ({
+    id: agent.pane_id,
+    cwd: agent.cwd,
+    program: agent.agent,
+    ...(agent.agent_session ? { session: agent.agent_session.value } : {}),
+    label: Text.make(`${agent.agent} in ${agent.pane_id}${agent.terminal_title_stripped ? ` (${agent.terminal_title_stripped})` : ""}`),
+    status: statusOf(agent.agent_status)
+  }))
+
+export const decodeAgents = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentList))
+
 export const notifyArgs = (title: Text, body: Text, sound: NotifySound) => ["notification", "show", title, "--body", body, "--sound", sound]
 
 export const HerdrHost = Layer.effect(
@@ -39,18 +52,8 @@ export const HerdrHost = Layer.effect(
     const sound = yield* Config.Literals(NotifySound.literals, "PRWATCH_NOTIFY_SOUND").pipe(Config.withDefault("none"))
 
     const agents = shell.run("herdr", ["agent", "list"]).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(AgentList))),
-      Effect.map(({ result }) =>
-        result.agents.map((agent) => ({
-          id: agent.pane_id,
-          cwd: agent.cwd,
-          program: agent.agent,
-          label: Text.make(
-            `${agent.agent} in ${agent.pane_id}${agent.terminal_title_stripped ? ` (${agent.terminal_title_stripped})` : ""}`
-          ),
-          status: statusOf(agent.agent_status)
-        }))
-      ),
+      Effect.flatMap(decodeAgents),
+      Effect.map(agentsOf),
       Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) })),
       Effect.withSpan("HerdrHost.agents")
     )

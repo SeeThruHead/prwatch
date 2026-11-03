@@ -72,7 +72,7 @@ prwatch also watches open pull requests you have commented on or reviewed but di
 An agent gets a pull request's updates when its working directory is that repository on the pull request's branch, on a `pr-<number>` branch, or detached at one of its commits. An agent that reviews many pull requests from one directory claims them instead:
 
 ```sh
-prwatch claim acme/app#42      # from inside the agent; a Claude Code session claims itself, otherwise $HERDR_PANE_ID or $TMUX_PANE
+prwatch claim acme/app#42      # from inside the agent; claims the herdr, cmux, orca or tmux pane it runs in, or the Claude Code session itself when it has no pane
 prwatch claim https://github.com/acme/app/pull/42 --agent w1:p3
 prwatch release acme/app#42
 prwatch claims

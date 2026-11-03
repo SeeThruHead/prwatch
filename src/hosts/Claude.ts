@@ -23,7 +23,11 @@ export const Listed = Schema.Struct({
 })
 type Listed = typeof Listed.Type
 
-const Registered = Schema.Struct({ sessionId: SessionId, messagingSocketPath: Schema.optionalKey(FilePath) })
+const Registered = Schema.Struct({
+  sessionId: SessionId,
+  cwd: Schema.optionalKey(FilePath),
+  messagingSocketPath: Schema.optionalKey(FilePath)
+})
 
 const statusOf = (state: typeof SessionState.Type | undefined) => {
   if (state === "idle") return "idle" as const
@@ -48,19 +52,47 @@ export const agentsOf = (sessions: readonly Listed[]): readonly Agent[] =>
     status: statusOf(session.state ?? session.status)
   }))
 
-export const preferSessions = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Agent[] => {
-  const onlySessionAt = (terminal: Agent) => {
-    const here = sessions.filter((session) => session.cwd === terminal.cwd)
-    return terminal.program === "claude" && here.length === 1 ? here[0] : undefined
-  }
-  const replaced = terminals.filter((terminal) => onlySessionAt(terminal) !== undefined)
-  const panesOf = (session: Agent) => replaced.filter((terminal) => onlySessionAt(terminal) === session).map((terminal) => terminal.id)
-  const withPanes = (session: Agent) => {
-    const panes = panesOf(session)
-    return panes.length === 0 ? session : { ...session, aliases: panes }
+const isClaudePane = (terminal: Agent) => terminal.program === "claude"
+
+const holdsSession = (session: AgentId) => (terminal: Agent) => isClaudePane(terminal) && terminal.session === Text.make(sessionOf(session))
+
+const soleClaudePaneAt = (session: Agent, sessions: readonly Agent[], terminals: readonly Agent[]) => {
+  const here = (agent: Agent) => agent.cwd === session.cwd
+  const unknown = terminals.filter((terminal) => isClaudePane(terminal) && terminal.session === undefined && here(terminal))
+
+  return unknown.length === 1 && sessions.filter(here).length === 1 ? unknown[0] : undefined
+}
+
+export const preferPanes = (sessions: readonly Agent[], terminals: readonly Agent[]): readonly Agent[] => {
+  const holders = sessions.map((session) => ({
+    session,
+    pane: terminals.find(holdsSession(session.id)) ?? soleClaudePaneAt(session, sessions, terminals)
+  }))
+  const withSessions = (terminal: Agent) => {
+    const held = holders.filter((holder) => holder.pane === terminal).map((holder) => holder.session.id)
+    return held.length === 0 ? terminal : { ...terminal, aliases: [...(terminal.aliases ?? []), ...held] }
   }
 
-  return [...sessions.map(withPanes), ...terminals.filter((terminal) => onlySessionAt(terminal) === undefined)]
+  return [...terminals.map(withSessions), ...holders.filter((holder) => holder.pane === undefined).map((holder) => holder.session)]
+}
+
+export type Caller = { readonly agent: AgentId; readonly cwd: Option.Option<FilePath> }
+
+const isThisPane = (caller: Caller, pane: AgentId) => (terminal: Agent) => {
+  if (terminal.id !== pane) return false
+  if (!isClaudePane(terminal)) return false
+  if (terminal.session !== undefined) return false
+
+  return Option.match(caller.cwd, { onNone: () => true, onSome: (cwd) => cwd === terminal.cwd })
+}
+
+export const claimTarget = (caller: Caller, pane: Option.Option<AgentId>, terminals: readonly Agent[]): AgentId => {
+  const holding = terminals.find(holdsSession(caller.agent))
+  if (holding !== undefined) return holding.id
+
+  const own = Option.flatMap(pane, (id) => Option.fromNullishOr(terminals.find(isThisPane(caller, id))))
+
+  return Option.match(own, { onNone: () => caller.agent, onSome: (terminal) => terminal.id })
 }
 
 export const inboxLines = (text: Text) => `${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`
@@ -94,12 +126,13 @@ const registeredSessions = Effect.fn("ClaudeSessions.registered")(function* (dir
 
 export const callerSession = Effect.gen(function* () {
   const socket = yield* Config.String("CLAUDE_CODE_MESSAGING_SOCKET").pipe(Config.withDefault(""))
-  if (socket === "") return Option.none<AgentId>()
+  if (socket === "") return Option.none<Caller>()
 
   const sessions = yield* registeredSessions(yield* sessionsDirectory)
-  return Option.map(Option.fromNullishOr(sessions.find((session) => session.messagingSocketPath === socket)), (session) =>
-    sessionAgentId(session.sessionId)
-  )
+  return Option.map(Option.fromNullishOr(sessions.find((session) => session.messagingSocketPath === socket)), (session): Caller => ({
+    agent: sessionAgentId(session.sessionId),
+    cwd: Option.fromNullishOr(session.cwd)
+  }))
 })
 
 const post = (socketPath: FilePath, text: Text) =>
@@ -139,7 +172,7 @@ export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>) =>
           Effect.catchTag("HostUnavailable", (error) => (live.length > 0 ? Effect.succeed([]) : Effect.fail(error)))
         )
 
-        return preferSessions(live, terminals)
+        return preferPanes(live, terminals)
       })
 
       const failed = (agent: AgentId, reason: Text) => new DeliveryFailed({ host: NAME, agent, reason })
