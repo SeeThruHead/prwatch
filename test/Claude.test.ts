@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, it } from "@effect/vitest"
-import { ConfigProvider, Effect, Layer, Schema } from "effect"
+import { ConfigProvider, Effect, Layer, Option, Schema } from "effect"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
@@ -8,7 +8,7 @@ import { join } from "node:path"
 
 import { FilePath, Stdout, Text, agentId } from "../src/Brands.ts"
 import { type Agent, Host } from "../src/Host.ts"
-import { Listed, agentsOf, inboxLines, preferSessions, withClaudeSessions } from "../src/hosts/Claude.ts"
+import { type Caller, Listed, agentsOf, claimTarget, inboxLines, preferPanes, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { Shell } from "../src/Shell.ts"
 
 const listed = [
@@ -17,10 +17,15 @@ const listed = [
   { sessionId: "s-3", cwd: "/work/web", state: "blocked" }
 ]
 
-const pane = (id: string, cwd: string, program = "claude"): Agent => ({
+const caller = (session: string, cwd: string): Caller => ({ agent: agentId(`claude:${session}`), cwd: Option.some(FilePath.make(cwd)) })
+
+const on = (id: string) => Option.some(agentId(id))
+
+const pane = (id: string, cwd: string, program = "claude", session?: string): Agent => ({
   id: agentId(id),
   cwd: FilePath.make(cwd),
   program: Text.make(program),
+  ...(session === undefined ? {} : { session: Text.make(session) }),
   label: Text.make(`${program} in ${id}`),
   status: "idle"
 })
@@ -47,20 +52,57 @@ describe("claude sessions", () => {
     ])
   })
 
-  it("replaces a Claude pane with the only session in its worktree, which takes over the pane's claims", () => {
+  it("leaves a session in the pane that holds it, and that pane answers to the session's claims", () => {
     const panes = [pane("w1:p1", "/work/app"), pane("w1:p3", "/work/app", "codex"), pane("w1:p2", "/work/other")]
-    const agents = preferSessions([pane("claude:s-1", "/work/app")], panes)
+    const agents = preferPanes([pane("claude:s-1", "/work/app")], panes)
 
     expect(agents.map((agent) => [agent.id, agent.aliases ?? []])).toEqual([
-      ["claude:s-1", ["w1:p1"]],
+      ["w1:p1", ["claude:s-1"]],
       ["w1:p3", []],
       ["w1:p2", []]
     ])
   })
 
-  it("keeps a Claude pane when several sessions share its directory, since it can't tell which one it is", () => {
+  it("pairs a session with the pane that reports its id, whatever the directory", () => {
+    const panes = [pane("w1:p1", "/elsewhere", "claude", "s-1"), pane("w1:p2", "/work/app", "claude", "s-9")]
+    const agents = preferPanes([pane("claude:s-1", "/work/app")], panes)
+
+    expect(agents.map((agent) => [agent.id, agent.aliases ?? []])).toEqual([
+      ["w1:p1", ["claude:s-1"]],
+      ["w1:p2", []]
+    ])
+  })
+
+  it("keeps a session of its own when no pane holds it, or when several sessions share a directory with the only pane", () => {
     const sessions = [pane("claude:s-1", "/work/app"), pane("claude:s-2", "/work/app")]
-    expect(preferSessions(sessions, [pane("w1:p1", "/work/app")]).map((agent) => agent.id)).toEqual(["claude:s-1", "claude:s-2", "w1:p1"])
+
+    expect(preferPanes(sessions, [pane("w1:p1", "/work/app")]).map((agent) => agent.id)).toEqual(["w1:p1", "claude:s-1", "claude:s-2"])
+    expect(preferPanes([pane("claude:s-1", "/work/app")], []).map((agent) => agent.id)).toEqual(["claude:s-1"])
+  })
+
+  it("claims the pane that reports the session, ignoring a stale pane id", () => {
+    const panes = [pane("w1:p1", "/work/app", "claude", "s-1"), pane("w1:p2", "/work/app", "claude", "s-2")]
+
+    expect(claimTarget(caller("s-1", "/work/app"), on("w1:p2"), panes)).toBe("w1:p1")
+  })
+
+  it("claims the pane the environment names when it is a Claude pane in the session's directory", () => {
+    const panes = [pane("w1:p1", "/work/app"), pane("w1:p2", "/work/other")]
+
+    expect(claimTarget(caller("s-1", "/work/app"), on("w1:p1"), panes)).toBe("w1:p1")
+    expect(claimTarget(caller("s-1", "/work/app"), on("w1:p2"), panes)).toBe("claude:s-1")
+  })
+
+  it("does not trust a pane that belongs to another session, a non-Claude pane or an unknown pane", () => {
+    const panes = [pane("w1:p1", "/work/app", "claude", "s-2"), pane("w1:p3", "/work/app", "codex")]
+
+    expect(claimTarget(caller("s-1", "/work/app"), on("w1:p1"), panes)).toBe("claude:s-1")
+    expect(claimTarget(caller("s-1", "/work/app"), on("w1:p3"), panes)).toBe("claude:s-1")
+    expect(claimTarget(caller("s-1", "/work/app"), on("w9:p9"), panes)).toBe("claude:s-1")
+  })
+
+  it("falls back to the session's inbox only when there is no pane at all", () => {
+    expect(claimTarget(caller("s-1", "/work/app"), Option.none(), [])).toBe("claude:s-1")
   })
 
   it("writes one newline-terminated user message", () => {
@@ -91,7 +133,7 @@ describe("claude sessions", () => {
         )
       )
 
-      expect((yield* host.agents).map((agent) => agent.id)).toEqual(["claude:s-1", "claude:s-2", "claude:s-3", "w1:p2"])
+      expect((yield* host.agents).map((agent) => agent.id)).toEqual(["w1:p1", "w1:p2", "claude:s-2", "claude:s-3"])
 
       yield* host.deliver(agentId("claude:s-1"), Text.make("new review on #7"))
       yield* host.deliver(agentId("w1:p2"), Text.make("ci passed"))

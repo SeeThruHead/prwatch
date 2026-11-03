@@ -14,13 +14,14 @@ import { FetchHttpClient } from "effect/http"
 
 import { Gitea } from "../src/Gitea.ts"
 import { GitHub } from "../src/GitHub.ts"
-import { callerSession, withClaudeSessions } from "../src/hosts/Claude.ts"
+import { callerSession, claimTarget, withClaudeSessions } from "../src/hosts/Claude.ts"
 import { CmuxHost } from "../src/hosts/Cmux.ts"
 import { HerdrHost } from "../src/hosts/Herdr.ts"
 import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
 import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
+import { type Agent, Host } from "../src/Host.ts"
 import { Shell } from "../src/Shell.ts"
 import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
@@ -186,10 +187,7 @@ const ack = Command.make("ack", { pull: pullArgument }, ({ pull }) =>
 
 const pullKeys = pullArgument.pipe(Argument.variadic({ min: 1 }))
 
-const callerPane = Effect.gen(function* () {
-  const session = yield* callerSession
-  if (Option.isSome(session)) return session.value
-
+const multiplexerPane = Effect.gen(function* () {
   const herdr = yield* Config.String("HERDR_PANE_ID").pipe(Config.withDefault(""))
   const cmux = yield* Config.String("CMUX_WORKSPACE_ID").pipe(Config.withDefault(""))
   const orca = yield* Config.String("ORCA_TERMINAL_HANDLE").pipe(Config.withDefault(""))
@@ -198,9 +196,22 @@ const callerPane = Effect.gen(function* () {
   return herdr || cmux || orca || tmux
 })
 
+const callerPane = Effect.gen(function* () {
+  const pane = yield* multiplexerPane
+  const caller = yield* callerSession
+  if (Option.isNone(caller)) return pane
+
+  const host = yield* Host
+  const terminals = yield* host.agents.pipe(Effect.orElseSucceed((): readonly Agent[] => []))
+
+  return claimTarget(caller.value, pane === "" ? Option.none() : Option.some(agentId(pane)), terminals)
+})
+
+const callerLayer = Layer.mergeAll(Store.layer, hostLayer("auto")).pipe(Layer.provide(Shell.layer))
+
 const agentFlag = Flag.String("agent").pipe(
   Flag.withDescription(
-    "the agent to send to; defaults to the Claude Code session this runs in, then the pane ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID, $ORCA_TERMINAL_HANDLE or $TMUX_PANE)"
+    "the agent to send to; defaults to the pane this runs in ($HERDR_PANE_ID, $CMUX_WORKSPACE_ID, $ORCA_TERMINAL_HANDLE or $TMUX_PANE), checked against the Claude Code session in it, or that session itself when it has no pane"
   ),
   Flag.withDefault("")
 )
@@ -213,17 +224,21 @@ const claim = Command.make("claim", { pulls: pullKeys, agent: agentFlag }, ({ pu
     const keys = yield* Effect.forEach(pulls, pullKey)
     yield* Bookkeeping.claim(keys, agentId(pane))
     yield* Console.log(`${pane} now gets updates for ${keys.join(", ")}`)
-  }).pipe(Effect.provide(Store.layer))
+  }).pipe(Effect.provide(callerLayer))
 ).pipe(Command.withDescription("send updates on these pull requests to this pane, wherever it is working"))
 
 const release = Command.make("release", { pulls: pullKeys, agent: agentFlag }, ({ pulls, agent }) =>
   Effect.gen(function* () {
     const pane = agent || (yield* callerPane)
+    const session = yield* callerSession
     const keys = yield* Effect.forEach(pulls, pullKey)
+    const answering = pane === "" ? [] : [agentId(pane), ...Option.toArray(Option.map(session, (caller) => caller.agent))]
 
-    yield* Bookkeeping.release(keys, pane === "" ? undefined : agentId(pane))
+    yield* answering.length === 0
+      ? Bookkeeping.release(keys, undefined)
+      : Effect.forEach(answering, (id) => Bookkeeping.release(keys, id), { discard: true })
     yield* Console.log(`released ${keys.join(", ")}${pane === "" ? " for every pane" : ` for ${pane}`}`)
-  }).pipe(Effect.provide(Store.layer))
+  }).pipe(Effect.provide(callerLayer))
 ).pipe(Command.withDescription("stop sending these pull requests to this pane"))
 
 const claims = Command.make("claims", {}, () =>
@@ -269,7 +284,7 @@ const watchRun = Command.make("watch-run", { run: runArgument, agent: agentFlag 
     const pending = yield* runPending(run)
     yield* Bookkeeping.watchRun(pending, agentId(pane))
     yield* Console.log(`${pane} will hear when ${pending.key} finishes`)
-  }).pipe(Effect.provide(Store.layer))
+  }).pipe(Effect.provide(callerLayer))
 ).pipe(Command.withDescription("tell this pane when a workflow run finishes, whoever started it"))
 
 const configLayer = Layer.mergeAll(
