@@ -80,6 +80,24 @@ describe("claude sessions", () => {
     expect(preferPanes([pane("claude:s-1", "/work/app")], []).map((agent) => agent.id)).toEqual(["claude:s-1"])
   })
 
+  it("treats the program names cmux and orca report for Claude as Claude", () => {
+    const panes = [pane("workspace-1", "/work/app", "claude_code"), pane("terminal-2", "/work/api", "claude-code")]
+
+    expect(preferPanes([pane("claude:s-1", "/work/app")], panes).map((agent) => [agent.id, agent.aliases ?? []])).toEqual([
+      ["workspace-1", ["claude:s-1"]],
+      ["terminal-2", []]
+    ])
+    expect(claimTarget(caller("s-2", "/work/api"), on("terminal-2"), panes)).toBe("terminal-2")
+  })
+
+  it("never claims the session while any pane holds it", () => {
+    const heldByReport = [pane("w1:p1", "/elsewhere", "claude", "s-1")]
+    const heldByDirectory = [pane("w1:p1", "/work/app")]
+
+    expect(claimTarget(caller("s-1", "/work/app"), Option.none(), heldByReport)).toBe("w1:p1")
+    expect(claimTarget(caller("s-1", "/work/app"), on("w1:p1"), heldByDirectory)).toBe("w1:p1")
+  })
+
   it("claims the pane that reports the session, ignoring a stale pane id", () => {
     const panes = [pane("w1:p1", "/work/app", "claude", "s-1"), pane("w1:p2", "/work/app", "claude", "s-2")]
 
@@ -109,7 +127,7 @@ describe("claude sessions", () => {
     expect(JSON.parse(inboxLines(Text.make("hello")))).toEqual({ type: "user", message: { role: "user", content: "hello" } })
   })
 
-  it.live("delivers to a session's inbox socket and falls back to the terminal for panes", () =>
+  it.live("delivers through a session's pane when one holds it, and to its inbox socket only when none does", () =>
     Effect.gen(function* () {
       const config = mkdtempSync(join(tmpdir(), "prwatch-claude-"))
       const socketPath = join(config, "inbox.sock")
@@ -119,6 +137,7 @@ describe("claude sessions", () => {
       yield* Effect.addFinalizer(() => Effect.sync(() => server.close()))
       mkdirSync(join(config, "sessions"))
       writeFileSync(join(config, "sessions", "123.json"), JSON.stringify({ pid: 123, sessionId: "s-1", messagingSocketPath: socketPath }))
+      writeFileSync(join(config, "sessions", "124.json"), JSON.stringify({ pid: 124, sessionId: "s-2", messagingSocketPath: socketPath }))
       writeFileSync(join(config, "sessions", "123.key"), "not json")
 
       const shell = Layer.succeed(Shell, Shell.of({ run: () => Effect.succeed(Stdout.make(JSON.stringify(listed))) }))
@@ -135,14 +154,15 @@ describe("claude sessions", () => {
 
       expect((yield* host.agents).map((agent) => agent.id)).toEqual(["w1:p1", "w1:p2", "claude:s-2", "claude:s-3"])
 
-      yield* host.deliver(agentId("claude:s-1"), Text.make("new review on #7"))
+      yield* host.deliver(agentId("claude:s-1"), Text.make("review for the session in a pane"))
       yield* host.deliver(agentId("w1:p2"), Text.make("ci passed"))
+      yield* host.deliver(agentId("claude:s-2"), Text.make("review for the session without a pane"))
       yield* Effect.sleep("50 millis")
 
-      expect(received.join("")).toBe(inboxLines(Text.make("new review on #7")))
-      expect(terminalDeliveries).toEqual(["w1:p2"])
+      expect(terminalDeliveries).toEqual(["w1:p1", "w1:p2"])
+      expect(received.join("")).toBe(inboxLines(Text.make("review for the session without a pane")))
 
-      const missing = yield* Effect.flip(host.deliver(agentId("claude:s-2"), Text.make("x")))
+      const missing = yield* Effect.flip(host.deliver(agentId("claude:s-3"), Text.make("x")))
       expect(missing.reason).toBe("the session has no inbox socket")
     }).pipe(Effect.scoped)
   )

@@ -52,7 +52,7 @@ export const agentsOf = (sessions: readonly Listed[]): readonly Agent[] =>
     status: statusOf(session.state ?? session.status)
   }))
 
-const isClaudePane = (terminal: Agent) => terminal.program === "claude"
+const isClaudePane = (terminal: Agent) => terminal.program?.startsWith("claude") ?? false
 
 const holdsSession = (session: AgentId) => (terminal: Agent) => isClaudePane(terminal) && terminal.session === Text.make(sessionOf(session))
 
@@ -189,8 +189,21 @@ export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>) =>
         yield* post(socketPath, text).pipe(Effect.mapError((error) => failed(agent, Text.make(error.message))))
       })
 
+      const paneHolding = (session: AgentId) =>
+        agents.pipe(
+          Effect.map((found) => found.find((candidate) => candidate.aliases?.includes(session))),
+          Effect.orElseSucceed(() => undefined)
+        )
+
+      const deliverToSessionOrItsPane = Effect.fn("ClaudeSessions.deliverToSessionOrItsPane")(function* (agent: AgentId, text: Text) {
+        const pane = yield* paneHolding(agent)
+        if (pane === undefined) return yield* deliverToSession(agent, text)
+
+        yield* fallback.deliver(pane.id, text)
+      })
+
       const deliver = (agent: AgentId, text: Text) =>
-        isSessionAgent(agent) ? deliverToSession(agent, text) : fallback.deliver(agent, text)
+        isSessionAgent(agent) ? deliverToSessionOrItsPane(agent, text) : fallback.deliver(agent, text)
 
       return Host.of({ name: fallback.name, agents, deliver, notify: fallback.notify })
     })
