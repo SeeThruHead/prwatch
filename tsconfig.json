@@ -13,7 +13,14 @@
     "skipLibCheck": true,
     "noEmit": true,
     "types": ["node"],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["effect", "@effect/*"],
+        "diagnostics": false
+      }
+    ]
   },
   "include": ["src", "bin", "test", "tools"]
 }
