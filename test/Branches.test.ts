@@ -12,7 +12,7 @@ const seenOf = Schema.decodeUnknownSync(SeenBranch)
 const seenAll = Schema.decodeUnknownSync(SeenBranches)
 
 const run = (id: number, workflow: string, outcome: Run["outcome"], done = true): Run =>
-  Schema.decodeUnknownSync(Run)({
+  Schema.decodeSync(Run)({
     id,
     workflow,
     title: `commit ${id}`,

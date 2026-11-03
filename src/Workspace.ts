@@ -11,7 +11,7 @@ export const remoteOf = (url: Url): Option.Option<{ readonly host: ForgeHost; re
   const slug = match?.[2]
   if (host === undefined || slug === undefined) return Option.none()
 
-  return Option.map(Schema.decodeUnknownOption(RepoSlug)(slug), (repo) => ({ host: forgeHost(Text.make(host)), repo }))
+  return Option.map(Schema.decodeOption(RepoSlug)(slug), (repo) => ({ host: forgeHost(Text.make(host)), repo }))
 }
 
 type GitArg = "remote" | "get-url" | "origin" | "rev-parse" | "--abbrev-ref" | "HEAD"
@@ -41,7 +41,7 @@ export class Workspace extends Context.Service<
           [git(cwd, ["remote", "get-url", "origin"]), git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]), git(cwd, ["rev-parse", "HEAD"])],
           { concurrency: 3 }
         )
-        const branch = head === "HEAD" ? Option.none() : Schema.decodeUnknownOption(Branch)(head)
+        const branch = head === "HEAD" ? Option.none() : Schema.decodeOption(Branch)(head)
 
         return Option.map(remoteOf(Url.make(remote)), (where) => ({ ...where, branch, commit: Sha.make(commit) }))
       }, Effect.orElseSucceed(Option.none))

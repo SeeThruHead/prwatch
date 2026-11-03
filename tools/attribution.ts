@@ -20,8 +20,8 @@ export const findAttribution = (where: string, text: string): ReadonlyArray<Find
     .filter((entry) => !entry.text.startsWith("#"))
     .filter((entry) => patterns.some((pattern) => pattern.test(entry.text)))
 
-export class AttributionFound extends Schema.TaggedError<AttributionFound>()("AttributionFound", {
-  findings: Schema.Array(Schema.Struct({ where: Schema.String, line: Schema.Number, text: Schema.String }))
+export class AttributionFound extends Schema.TaggedError<AttributionFound, { readonly brand: unique symbol }>()("AttributionFound", {
+  findings: Schema.Array(Schema.Struct({ where: Schema.String, line: Schema.Finite, text: Schema.String }))
 }) {}
 
 const exempt = new Set(["tools/attribution.ts", "test/Attribution.test.ts"])
@@ -46,7 +46,8 @@ export const scanRepository = Effect.fn("Attribution.scanRepository")(function* 
 
 export const checkMessage = Effect.fn("Attribution.checkMessage")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem
-  const findings = findAttribution("commit message", yield* fs.readFileString(file))
+  const message = yield* fs.readFileString(file)
+  const findings = findAttribution("commit message", message)
 
   if (findings.length > 0) return yield* new AttributionFound({ findings })
 })

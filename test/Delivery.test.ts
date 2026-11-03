@@ -44,8 +44,8 @@ describe("delivery order", () => {
   })
 
   it("decodes a delivery key beside the rules, and rules alone still decode", () => {
-    expect(Schema.decodeUnknownSync(WatchRules)({ delivery: ["herdr", "claude"] })).toEqual({ rules: [], delivery: ["herdr", "claude"] })
-    expect(Schema.decodeUnknownSync(WatchRules)({ rules: [] }).delivery).toBeUndefined()
+    expect(Schema.decodeSync(WatchRules)({ delivery: ["herdr", "claude"] })).toEqual({ rules: [], delivery: ["herdr", "claude"] })
+    expect(Schema.decodeSync(WatchRules)({ rules: [] }).delivery).toBeUndefined()
   })
 
   it("rejects an unknown host name and an empty list", () => {
@@ -55,17 +55,24 @@ describe("delivery order", () => {
 
   it.effect("reads the default when config.json has no delivery key or does not exist", () =>
     Effect.gen(function* () {
-      expect(yield* deliveryOf({})).toEqual(DEFAULT_DELIVERY)
-      expect(yield* deliveryOf({ "config.json": { rules: [] } })).toEqual(DEFAULT_DELIVERY)
+      const withoutFiles = yield* deliveryOf({})
+      const withoutKey = yield* deliveryOf({ "config.json": { rules: [] } })
+
+      expect(withoutFiles).toEqual(DEFAULT_DELIVERY)
+      expect(withoutKey).toEqual(DEFAULT_DELIVERY)
     })
   )
 
   it.effect("reads the order from config.json, and config.local.json replaces it on one machine", () =>
     Effect.gen(function* () {
-      expect(yield* deliveryOf({ "config.json": { delivery: ["cmux", "herdr"] } })).toEqual(["cmux", "herdr"])
-      expect(
-        yield* deliveryOf({ "config.json": { delivery: ["cmux", "herdr"] }, "config.local.json": { delivery: ["tmux", "claude"] } })
-      ).toEqual(["tmux", "claude"])
+      const shared = yield* deliveryOf({ "config.json": { delivery: ["cmux", "herdr"] } })
+      const local = yield* deliveryOf({
+        "config.json": { delivery: ["cmux", "herdr"] },
+        "config.local.json": { delivery: ["tmux", "claude"] }
+      })
+
+      expect(shared).toEqual(["cmux", "herdr"])
+      expect(local).toEqual(["tmux", "claude"])
     })
   )
 

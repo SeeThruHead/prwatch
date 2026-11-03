@@ -38,7 +38,7 @@ export type Status = typeof Status.Type
 export const Claims = Schema.Record(PrKey, Schema.Array(Schema.Struct({ agent: AgentId, at: IsoTime })))
 export type Claims = typeof Claims.Type
 
-export class StoreUnwritable extends Schema.TaggedError<StoreUnwritable>()("StoreUnwritable", {
+export class StoreUnwritable extends Schema.TaggedError<StoreUnwritable, { readonly brand: unique symbol }>()("StoreUnwritable", {
   path: FilePath,
   reason: Text
 }) {
@@ -70,8 +70,14 @@ export class Store extends Context.Service<
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path
-      const fallback = path.join(yield* Config.String("HOME").pipe(Config.withDefault(".")), ".prwatch")
-      const home = FilePath.make(yield* Config.String("PRWATCH_HOME").pipe(Config.withDefault(fallback)))
+      const fallback = yield* Config.String("HOME").pipe(
+        Config.withDefault("."),
+        Config.map((home) => path.join(home, ".prwatch"))
+      )
+      const home = yield* Config.String("PRWATCH_HOME").pipe(
+        Config.withDefault(fallback),
+        Config.map((home) => FilePath.make(home))
+      )
 
       yield* fs.makeDirectory(home, { recursive: true }).pipe(Effect.orDie)
 

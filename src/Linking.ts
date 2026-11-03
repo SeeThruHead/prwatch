@@ -60,12 +60,12 @@ const extracted = (link: Extract<Link, object>, occurrence: Occurrence): Option.
   Option.flatMap(captured(occurrence, link.extract), (text) => {
     if (link.extract.as === "sha") return Option.some({ ...linked(occurrence, Option.none()), sha: Sha.make(text) })
     if (link.extract.as === "branch")
-      return Option.map(Schema.decodeUnknownOption(Branch)(text), (branch) => ({
+      return Option.map(Schema.decodeOption(Branch)(text), (branch) => ({
         ...linked(occurrence, Option.none()),
         branch: Option.some(branch)
       }))
 
-    return Option.map(Schema.decodeUnknownOption(PrNumber)(Number(text)), (number) =>
+    return Option.map(Schema.decodeOption(PrNumber)(Number(text)), (number) =>
       linked(occurrence, Option.some(prKey(occurrence.repo, number)))
     )
   })

@@ -170,12 +170,12 @@ export class RunWatcher extends Context.Service<
       const hook = Effect.fn("RunWatcher.hook")(function* (rule: Rule, occurrence: Occurrence, linked: Linked, viewer: Login) {
         if (rule.command === undefined) return Option.some({ linked, message: Option.none<Text>() })
 
-        const payload = JSON.stringify({
+        const payload = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
           rule: rule.name,
           viewer,
           builtin: { pr: Option.getOrNull(linked.pr), branch: Option.getOrNull(linked.branch), sha: linked.sha },
           occurrence: { ...occurrence, branch: Option.getOrNull(occurrence.branch), actor: Option.getOrNull(occurrence.actor) }
-        })
+        }).pipe(Effect.orDie)
         const answer = yield* shell
           .run("sh", ["-c", rule.command], { stdin: payload })
           .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(HookAnswer))), Effect.tapError(warn), Effect.option)
@@ -199,7 +199,7 @@ export class RunWatcher extends Context.Service<
         const watchers = state.watches[occurrence.key]?.agents ?? []
         const routed = route(evaluate(rules, occurrence, config.machine, { viewer, pulls: yield* pullsFor(rules, occurrence) }))
         const hooked = yield* Option.match(routed, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: ({ rule, linked }) => hook(rule, occurrence, linked, viewer)
         })
         const byRule = Option.flatMap(routed, ({ rule }) =>

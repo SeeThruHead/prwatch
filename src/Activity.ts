@@ -7,7 +7,10 @@ import { type Occurrence, occurrenceOf } from "./Occurrence.ts"
 import type { Pending } from "./RunState.ts"
 import { type CommandFailed, Shell } from "./Shell.ts"
 
-export class ActivityUnavailable extends Schema.TaggedError<ActivityUnavailable>()("ActivityUnavailable", { reason: Text }) {
+export class ActivityUnavailable extends Schema.TaggedError<ActivityUnavailable, { readonly brand: unique symbol }>()(
+  "ActivityUnavailable",
+  { reason: Text }
+) {
   override get message() {
     return `could not read workflow activity from GitHub (${this.reason})`
   }
@@ -86,12 +89,14 @@ export class Activity extends Context.Service<
       ) =>
         shell.run("gh", ["api", "-X", "GET", path, ...params.flatMap((param) => ["-f", param]), ...paging]).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(schema))),
-          Effect.map((value): S["Type"] => value),
-          Effect.mapError(unavailable)
+          Effect.mapBoth({
+            onFailure: unavailable,
+            onSuccess: (value): S["Type"] => value
+          })
         )
 
       const viewer = shell.run("gh", ["api", "user", "--jq", ".login"]).pipe(
-        Effect.flatMap((login) => Schema.decodeUnknownEffect(Login)(login.trim())),
+        Effect.flatMap((login) => Schema.decodeEffect(Login)(login.trim())),
         Effect.mapError(unavailable),
         Effect.withSpan("Activity.viewer")
       )
@@ -105,9 +110,7 @@ export class Activity extends Context.Service<
       })
 
       const repos = Effect.fn("Activity.repos")(function* (globs: readonly Glob[]) {
-        const literal = globs
-          .filter((glob) => !/[*?]/.test(glob))
-          .flatMap((glob) => Option.toArray(Schema.decodeUnknownOption(RepoSlug)(glob)))
+        const literal = globs.filter((glob) => !/[*?]/.test(glob)).flatMap((glob) => Option.toArray(Schema.decodeOption(RepoSlug)(glob)))
         const owners = distinct(globs.filter((glob) => /[*?]/.test(glob)).map((glob) => Text.make(glob.split("/")[0] ?? "")))
         const listed = yield* Effect.forEach(owners, owned, { concurrency: CONCURRENCY })
         const wild = globs.filter((glob) => /[*?]/.test(glob)).map(globToRegExp)

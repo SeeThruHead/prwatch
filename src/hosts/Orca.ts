@@ -42,8 +42,10 @@ export const OrcaHost = Layer.effect(
 
     const agents = shell.run("orca", ["terminal", "list", "--json"]).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Terminals))),
-      Effect.map(({ result }) => agentsOf(result.terminals)),
-      Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) })),
+      Effect.mapBoth({
+        onFailure: (error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) }),
+        onSuccess: ({ result }) => agentsOf(result.terminals)
+      }),
       Effect.withSpan("OrcaHost.agents")
     )
 

@@ -184,7 +184,7 @@ export const deployment = (repo: RepoSlug, raw: Raw): Option.Option<Occurrence> 
       title: Text.make(`${found.environment} deployment${found.description ? `: ${found.description}` : ""}`),
       url: found.log_url ?? Url.make(`https://github.com/${repo}/deployments`),
       sha: found.sha,
-      branch: Schema.decodeUnknownOption(Branch)(found.ref),
+      branch: Schema.decodeOption(Branch)(found.ref),
       actor: loginOf(found.creator),
       outcome: stated(found.state),
       at: found.updated_at,

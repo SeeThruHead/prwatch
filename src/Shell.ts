@@ -3,9 +3,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 
 import { Stdout } from "./Brands.ts"
 
-export class CommandFailed extends Schema.TaggedError<CommandFailed>()("CommandFailed", {
+export class CommandFailed extends Schema.TaggedError<CommandFailed, { readonly brand: unique symbol }>()("CommandFailed", {
   command: Schema.String,
-  exitCode: Schema.Number,
+  exitCode: Schema.Finite,
   stderr: Schema.String
 }) {
   override get message() {

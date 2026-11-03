@@ -152,7 +152,7 @@ export const callerSession = Effect.gen(function* () {
   const socket = yield* Config.String("CLAUDE_CODE_MESSAGING_SOCKET").pipe(Config.withDefault(""))
   if (socket === "") return Option.none<Caller>()
 
-  const sessions = yield* registeredSessions(yield* sessionsDirectory)
+  const sessions = yield* sessionsDirectory.pipe(Effect.flatMap(registeredSessions))
   return Option.map(Option.fromNullishOr(sessions.find((session) => session.messagingSocketPath === socket)), (session): Caller => ({
     agent: sessionAgentId(session.sessionId),
     cwd: Option.fromNullishOr(session.cwd)
@@ -172,12 +172,7 @@ export const withClaudeSessions = <E, R>(terminal: Layer.Layer<Host, E, R>, sock
   Layer.effect(
     Host,
     Effect.gen(function* () {
-      const fallback = yield* Effect.provide(
-        Effect.gen(function* () {
-          return yield* Host
-        }),
-        terminal
-      )
+      const fallback = yield* Effect.provide(Effect.service(Host), terminal)
       const shell = yield* Shell
       const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path

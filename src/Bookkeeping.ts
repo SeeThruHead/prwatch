@@ -18,7 +18,7 @@ export const acknowledge = Effect.fn("Bookkeeping.acknowledge")(function* (key: 
 export const claim = Effect.fn("Bookkeeping.claim")(function* (keys: readonly PrKey[], agent: AgentId) {
   const store = yield* Store
   const claims = yield* store.claims
-  const at = isoTime(yield* DateTime.now)
+  const at = yield* DateTime.now.pipe(Effect.map(isoTime))
   const added = Object.fromEntries(
     keys.map((key) => [key, [...(claims[key] ?? []).filter((entry) => entry.agent !== agent), { agent, at }]] as const)
   )
@@ -44,7 +44,7 @@ export const release = Effect.fn("Bookkeeping.release")(function* (keys: readonl
 
 export const watchRun = Effect.fn("Bookkeeping.watchRun")(function* (pending: Pending, agent: AgentId) {
   const store = yield* Store
-  const state = (yield* store.runs) ?? initial(yield* DateTime.now)
+  const state = (yield* store.runs) ?? (yield* DateTime.now.pipe(Effect.map(initial)))
   const agents = [...(state.watches[pending.key]?.agents ?? []).filter((entry) => entry !== agent), agent]
 
   yield* store.saveRuns({ ...state, watches: { ...state.watches, [pending.key]: { pending, agents } } })

@@ -57,7 +57,7 @@ const terminal = Layer.succeed(
 describe("claude sessions", () => {
   it("lists each live session as an agent at its working directory", () => {
     expect(
-      agentsOf(Schema.decodeUnknownSync(Schema.Array(Listed))(listed)).map((agent) => [agent.id, agent.cwd, agent.status, agent.label])
+      agentsOf(Schema.decodeSync(Schema.Array(Listed))(listed)).map((agent) => [agent.id, agent.cwd, agent.status, agent.label])
     ).toEqual([
       ["claude:s-1", "/work/app", "idle", 'claude session "app work"'],
       ["claude:s-2", "/work/api", "working", 'claude session "s-2"'],
@@ -167,15 +167,16 @@ describe("claude sessions", () => {
       yield* Effect.callback<void>((resume) => void server.listen(socketPath, () => resume(Effect.void)))
       yield* Effect.addFinalizer(() => Effect.sync(() => server.close()))
       mkdirSync(join(config, "sessions"))
-      writeFileSync(join(config, "sessions", "123.json"), JSON.stringify({ pid: 123, sessionId: "s-1", messagingSocketPath: socketPath }))
-      writeFileSync(join(config, "sessions", "124.json"), JSON.stringify({ pid: 124, sessionId: "s-2", messagingSocketPath: socketPath }))
+      const session = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+      const first = yield* session({ pid: 123, sessionId: "s-1", messagingSocketPath: socketPath })
+      const second = yield* session({ pid: 124, sessionId: "s-2", messagingSocketPath: socketPath })
+      writeFileSync(join(config, "sessions", "123.json"), first)
+      writeFileSync(join(config, "sessions", "124.json"), second)
       writeFileSync(join(config, "sessions", "123.key"), "not json")
 
       const shell = Layer.succeed(Shell, Shell.of({ run: () => Effect.succeed(Stdout.make(JSON.stringify(listed))) }))
       const host = yield* Effect.provide(
-        Effect.gen(function* () {
-          return yield* Host
-        }),
+        Effect.service(Host),
         withClaudeSessions(terminal, "last").pipe(
           Layer.provide(shell),
           Layer.provide(NodeServices.layer),

@@ -22,7 +22,7 @@ const review = (id: number, login: string, state: RawReview["state"], overrides:
 })
 
 const fetched = (overrides: Partial<typeof Fetched.Encoded> = {}): Fetched =>
-  Schema.decodeUnknownSync(Fetched)({
+  Schema.decodeSync(Fetched)({
     repo: "sth/app",
     pull: {
       number: 3,
@@ -53,7 +53,7 @@ describe("checksOf", () => {
   })
 })
 
-const reviews = (raw: ReadonlyArray<ReturnType<typeof review>>) => Schema.decodeUnknownSync(Fetched.fields.reviews)(raw)
+const reviews = (raw: ReadonlyArray<ReturnType<typeof review>>) => Schema.decodeSync(Fetched.fields.reviews)(raw)
 
 describe("decisionOf", () => {
   it("is the latest verdict of each reviewer, with changes requested winning", () => {

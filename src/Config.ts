@@ -8,7 +8,9 @@ import { problems } from "./Matcher.ts"
 import { DEFAULT_DELIVERY } from "./Delivery.ts"
 import { type Delivery, type Rule, WatchRules } from "./Rules.ts"
 
-export class RulesInvalid extends Schema.TaggedError<RulesInvalid>()("RulesInvalid", { reasons: Schema.Array(Text) }) {
+export class RulesInvalid extends Schema.TaggedError<RulesInvalid, { readonly brand: unique symbol }>()("RulesInvalid", {
+  reasons: Schema.Array(Text)
+}) {
   override get message() {
     return `watch rules are invalid: ${this.reasons.join("; ")}`
   }
@@ -38,8 +40,14 @@ export class RulesConfig extends Context.Service<
       const path = yield* Path.Path
       const home = yield* Config.String("HOME").pipe(Config.withDefault("."))
       const xdg = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(path.join(home, ".config")))
-      const dir = FilePath.make(yield* Config.String("PRWATCH_CONFIG_DIR").pipe(Config.withDefault(path.join(xdg, "prwatch"))))
-      const machine = Hostname.make(yield* Config.String("PRWATCH_MACHINE").pipe(Config.withDefault(hostname())))
+      const dir = yield* Config.String("PRWATCH_CONFIG_DIR").pipe(
+        Config.withDefault(path.join(xdg, "prwatch")),
+        Config.map((dir) => FilePath.make(dir))
+      )
+      const machine = yield* Config.String("PRWATCH_MACHINE").pipe(
+        Config.withDefault(hostname()),
+        Config.map((machine) => Hostname.make(machine))
+      )
       const files = FILES.map((name) => FilePath.make(path.join(dir, name)))
 
       const invalid = (file: FilePath) => (error: Error) => new RulesInvalid({ reasons: [Text.make(`${file}: ${error.message}`)] })
@@ -48,7 +56,7 @@ export class RulesConfig extends Context.Service<
         if (!(yield* fs.exists(file).pipe(Effect.mapError(invalid(file))))) return undefined
 
         const text = yield* fs.readFileString(file).pipe(Effect.mapError(invalid(file)))
-        return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(WatchRules))(text, { onExcessProperty: "error" }).pipe(
+        return yield* Schema.decodeEffect(Schema.fromJsonString(WatchRules))(text, { onExcessProperty: "error" }).pipe(
           Effect.mapError(invalid(file))
         )
       })
@@ -59,7 +67,7 @@ export class RulesConfig extends Context.Service<
       const merged = (lists: readonly (readonly Located[])[]) => lastBy(lists.flat(), (entry) => entry.rule.name)
 
       const load = Effect.gen(function* () {
-        const located = merged(yield* Effect.forEach(files, rulesIn))
+        const located = yield* Effect.forEach(files, rulesIn).pipe(Effect.map(merged))
         const reasons = problems(located.map((entry) => entry.rule))
         if (reasons.length > 0) return yield* new RulesInvalid({ reasons })
 

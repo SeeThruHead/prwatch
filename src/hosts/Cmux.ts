@@ -55,7 +55,7 @@ export const CmuxHost = Layer.effect(
     const cmux = (args: Parameters<typeof shell.run>[1]) => shell.run("cmux", args)
 
     const describe = Effect.fnUntraced(function* (workspace: typeof CmuxWorkspace.Type) {
-      const sidebar = fields(yield* cmux(["sidebar-state", "--workspace", workspace.id]))
+      const sidebar = yield* cmux(["sidebar-state", "--workspace", workspace.id]).pipe(Effect.map(fields))
       const agent = agentStatus(sidebar)
       const cwd = sidebar.get("focused_cwd") ?? sidebar.get("cwd")
       if (agent === undefined || cwd === undefined) return []
@@ -74,8 +74,10 @@ export const CmuxHost = Layer.effect(
     const agents = cmux(["--json", "--id-format", "uuids", "list-workspaces"]).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Workspaces))),
       Effect.flatMap(({ workspaces }) => Effect.forEach(workspaces, describe, { concurrency: 4 })),
-      Effect.map((found) => found.flat()),
-      Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) })),
+      Effect.mapBoth({
+        onFailure: (error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) }),
+        onSuccess: (found) => found.flat()
+      }),
       Effect.withSpan("CmuxHost.agents")
     )
 

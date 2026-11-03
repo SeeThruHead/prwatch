@@ -24,24 +24,25 @@ export const TmuxHost = Layer.effect(
     ])
 
     const agents = shell.run("tmux", ["list-panes", "-a", "-F", FORMAT]).pipe(
-      Effect.map((out) =>
-        out
-          .split("\n")
-          .filter((line) => line.trim() !== "")
-          .map((line) => {
-            const [id = "", cwd = "", command = "", where = ""] = line.split("\t")
-            return { id, cwd, command, where }
-          })
-          .filter((pane) => commands.has(pane.command))
-          .map((pane) => ({
-            id: agentId(pane.id),
-            cwd: FilePath.make(pane.cwd),
-            program: Text.make(pane.command),
-            label: Text.make(`${pane.command} in ${pane.where}`),
-            status: "unknown" as const
-          }))
-      ),
-      Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) })),
+      Effect.mapBoth({
+        onFailure: (error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) }),
+        onSuccess: (out) =>
+          out
+            .split("\n")
+            .filter((line) => line.trim() !== "")
+            .map((line) => {
+              const [id = "", cwd = "", command = "", where = ""] = line.split("\t")
+              return { id, cwd, command, where }
+            })
+            .filter((pane) => commands.has(pane.command))
+            .map((pane) => ({
+              id: agentId(pane.id),
+              cwd: FilePath.make(pane.cwd),
+              program: Text.make(pane.command),
+              label: Text.make(`${pane.command} in ${pane.where}`),
+              status: "unknown" as const
+            }))
+      }),
       Effect.withSpan("TmuxHost.agents")
     )
 

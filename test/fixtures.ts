@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import { Item, PullRequest } from "../src/GitHub.ts"
 
 export const item = (overrides: Partial<typeof Item.Encoded> & Pick<typeof Item.Encoded, "id">): Item =>
-  Schema.decodeUnknownSync(Item)({
+  Schema.decodeSync(Item)({
     kind: "thread",
     author: "reviewer",
     bot: false,
@@ -15,7 +15,7 @@ export const item = (overrides: Partial<typeof Item.Encoded> & Pick<typeof Item.
   })
 
 export const pull = (overrides: Partial<typeof PullRequest.Encoded> = {}): PullRequest =>
-  Schema.decodeUnknownSync(PullRequest)({
+  Schema.decodeSync(PullRequest)({
     id: "PR_1",
     key: "acme/app#1",
     host: "github.com",

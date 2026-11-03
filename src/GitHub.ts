@@ -387,7 +387,7 @@ const toPullRequest =
     }
   }
 
-export class GitHubUnavailable extends Schema.TaggedError<GitHubUnavailable>()("GitHubUnavailable", {
+export class GitHubUnavailable extends Schema.TaggedError<GitHubUnavailable, { readonly brand: unique symbol }>()("GitHubUnavailable", {
   reason: Text
 }) {
   override get message() {
@@ -416,31 +416,34 @@ export class GitHub extends Context.Service<
       const pullRequests = graphql(QUERY).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(PullNode)))),
         Effect.zip(DateTime.now),
-        Effect.map(([{ data }, now]) => {
-          const viewer = data.viewer.login
-          const pulls = withRoles(
-            [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
-            [...data.commented.nodes, ...data.reviewed.nodes],
-            Schema.decodeUnknownOption(PullNode)
-          ).map(({ node, role }) => toPullRequest(viewer, role)(node))
+        Effect.mapBoth({
+          onFailure: unavailable,
+          onSuccess: ([{ data }, now]) => {
+            const viewer = data.viewer.login
+            const pulls = withRoles(
+              [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
+              [...data.commented.nodes, ...data.reviewed.nodes],
+              Schema.decodeUnknownOption(PullNode)
+            ).map(({ node, role }) => toPullRequest(viewer, role)(node))
 
-          return { viewer, pulls }
+            return { viewer, pulls }
+          }
         }),
-        Effect.mapError(unavailable),
         Effect.withSpan("GitHub.pullRequests")
       )
 
       const stamps = graphql(PROBE).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ResponseOf(StampNode)))),
         Effect.zip(DateTime.now),
-        Effect.map(([{ data }, now]) =>
-          withRoles(
-            [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
-            [...data.commented.nodes, ...data.reviewed.nodes],
-            Schema.decodeUnknownOption(StampNode)
-          ).map(stampOf)
-        ),
-        Effect.mapError(unavailable),
+        Effect.mapBoth({
+          onFailure: unavailable,
+          onSuccess: ([{ data }, now]) =>
+            withRoles(
+              [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
+              [...data.commented.nodes, ...data.reviewed.nodes],
+              Schema.decodeUnknownOption(StampNode)
+            ).map(stampOf)
+        }),
         Effect.withSpan("GitHub.stamps")
       )
 

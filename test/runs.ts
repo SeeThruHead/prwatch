@@ -99,10 +99,10 @@ export const statusOf = (overrides: Record<string, unknown> = {}) =>
   )
 
 export const rule = (overrides: Record<string, unknown> = {}) =>
-  Schema.decodeUnknownSync(Rule)({ name: "r", repos: ["acme/*"], link: "any", ...overrides })
+  Schema.decodeSync(Rule)({ name: "r", repos: ["acme/*"], link: "any", ...overrides })
 
 export const merged = (overrides: Partial<PullFact> = {}): PullFact => ({
-  number: Schema.decodeUnknownSync(Schema.Int.pipe(Schema.brand("PrNumber")))(7),
+  number: Schema.decodeSync(Schema.Int.pipe(Schema.brand("PrNumber")))(7),
   open: false,
   merged: true,
   head: Sha.make("feedbee"),

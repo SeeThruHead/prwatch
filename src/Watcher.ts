@@ -3,7 +3,7 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Sch
 import { type BranchChange, type BranchKey, type Pending, type SeenBranches, branchChanges, branchKey } from "./Branches.ts"
 import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
 import { Gitea } from "./Gitea.ts"
-import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
+import { GitHub, type GitHubUnavailable, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
 import {
   type AgentId,
@@ -32,7 +32,7 @@ import {
 } from "./Message.ts"
 import { type RunDelivery, RunWatcher } from "./Runs.ts"
 import type { StatusRun } from "./RunState.ts"
-import { type Claims, type Status, type StatusPull, Store } from "./Store.ts"
+import { type Claims, type Status, type StatusPull, Store, type StoreUnwritable } from "./Store.ts"
 import { Workspace } from "./Workspace.ts"
 
 export type Placed = Agent & {
@@ -239,7 +239,7 @@ export class Watcher extends Context.Service<
   {
     readonly cycle: (
       options: Options
-    ) => Effect.Effect<{ readonly pulls: readonly Delivery[]; readonly runs: readonly RunDelivery[] }, unknown>
+    ) => Effect.Effect<{ readonly pulls: readonly Delivery[]; readonly runs: readonly RunDelivery[] }, GitHubUnavailable | StoreUnwritable>
     readonly watch: (
       options: Options & { readonly interval: Duration.Duration; readonly probe: Duration.Duration; readonly runsEvery: Duration.Duration }
     ) => Effect.Effect<never>
@@ -378,16 +378,15 @@ export class Watcher extends Context.Service<
       const dispatch = Effect.fn("Watcher.dispatch")(function* (pulls: readonly PullRequest[], options: Options) {
         const [seen, previous, found, claims] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
         const deliveries = plan(pulls, seen, found, claims)
-        const at = isoTime(yield* DateTime.now)
+        const now = yield* DateTime.now
+        const at = isoTime(now)
 
         yield* Effect.forEach(deliveries, (delivery) => send(delivery, options), { discard: true })
         if (options.dryRun) return deliveries
 
         yield* store.saveSeen(nextSeen(pulls, seen))
         if (found.agents.length > 0)
-          yield* store.saveClaims(
-            liveClaims(claims, pulls, found.agents, isoTime(DateTime.subtractDuration(yield* DateTime.now, CLAIM_AFTER_CLOSE)))
-          )
+          yield* store.saveClaims(liveClaims(claims, pulls, found.agents, isoTime(DateTime.subtractDuration(now, CLAIM_AFTER_CLOSE))))
         yield* store.saveStatus(nextStatus(previous, pulls, deliveries, host.name, at))
 
         return deliveries
@@ -420,7 +419,7 @@ export class Watcher extends Context.Service<
         if (recent.length === 0) return
 
         const previous = yield* store.status
-        const at = isoTime(yield* DateTime.now)
+        const at = yield* DateTime.now.pipe(Effect.map(isoTime))
         const base: Status = previous ?? { updatedAt: at, host: host.name, pulls: [] }
         const keys = new Set<RunKey>(recent.map((run) => run.key))
         const runs = [...recent, ...(base.runs ?? []).filter((run) => !keys.has(run.key))].slice(0, MAX_RUNS)
@@ -497,7 +496,8 @@ export class Watcher extends Context.Service<
         if (moved.length === 0 && stamps.length === synced.stamps.length)
           return yield* checkBranches([...synced.pulls, ...(yield* Ref.get(lastGitea))], options)
 
-        const pulls = refreshed(synced, stamps, yield* github.pullsById(moved))
+        const fetched = yield* github.pullsById(moved)
+        const pulls = refreshed(synced, stamps, fetched)
         const all = [...pulls, ...(yield* Ref.get(lastGitea))]
         yield* dispatch(all, options)
         yield* checkBranches(all, options)
@@ -510,7 +510,7 @@ export class Watcher extends Context.Service<
             Predicate.hasProperty(error, "message") && Predicate.isString(error.message) ? error.message : String(error)
           )
           const previous = yield* store.status
-          const at = isoTime(yield* DateTime.now)
+          const at = yield* DateTime.now.pipe(Effect.map(isoTime))
 
           yield* Effect.logWarning(message)
           yield* store.saveStatus({ updatedAt: at, host: host.name, error: message, pulls: previous?.pulls ?? [] }).pipe(Effect.ignore)

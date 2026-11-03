@@ -53,8 +53,10 @@ export const HerdrHost = Layer.effect(
 
     const agents = shell.run("herdr", ["agent", "list"]).pipe(
       Effect.flatMap(decodeAgents),
-      Effect.map(agentsOf),
-      Effect.mapError((error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) })),
+      Effect.mapBoth({
+        onFailure: (error) => new HostUnavailable({ host: NAME, reason: Text.make(error.message) }),
+        onSuccess: agentsOf
+      }),
       Effect.withSpan("HerdrHost.agents")
     )
 

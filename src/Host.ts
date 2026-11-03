@@ -2,7 +2,7 @@ import { Context, Effect, Schema } from "effect"
 
 import { AgentId, FilePath, HostName, Text } from "./Brands.ts"
 
-export class HostUnavailable extends Schema.TaggedError<HostUnavailable>()("HostUnavailable", {
+export class HostUnavailable extends Schema.TaggedError<HostUnavailable, { readonly brand: unique symbol }>()("HostUnavailable", {
   host: HostName,
   reason: Text
 }) {
@@ -11,7 +11,7 @@ export class HostUnavailable extends Schema.TaggedError<HostUnavailable>()("Host
   }
 }
 
-export class DeliveryFailed extends Schema.TaggedError<DeliveryFailed>()("DeliveryFailed", {
+export class DeliveryFailed extends Schema.TaggedError<DeliveryFailed, { readonly brand: unique symbol }>()("DeliveryFailed", {
   host: HostName,
   agent: AgentId,
   reason: Text

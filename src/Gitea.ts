@@ -241,7 +241,7 @@ export const toPullRequest =
 
 export const GiteaConfig = Schema.Struct({ url: Url, token: Schema.String.pipe(Schema.brand("GiteaToken")) })
 
-export class GiteaUnavailable extends Schema.TaggedError<GiteaUnavailable>()("GiteaUnavailable", {
+export class GiteaUnavailable extends Schema.TaggedError<GiteaUnavailable, { readonly brand: unique symbol }>()("GiteaUnavailable", {
   reason: Text
 }) {
   override get message() {
@@ -280,7 +280,7 @@ export class Gitea extends Context.Service<
         if (!(yield* fs.exists(configFile))) return Option.none()
 
         const text = yield* fs.readFileString(configFile)
-        const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(GiteaConfig))(text)
+        const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GiteaConfig))(text)
 
         return Option.some({ base: Url.make(parsed.url.replace(/\/+$/, "")), token: Redacted.make(parsed.token) })
       }).pipe(Effect.mapError(unavailable))
@@ -404,7 +404,7 @@ export class Gitea extends Context.Service<
       const failedJobs = Effect.fn("Gitea.failedJobs")(function* (repo: RepoSlug, run: RunId) {
         const { get } = yield* configured
 
-        return failedJobNames(yield* get(Text.make(`${repoPath(repo)}/actions/runs/${run}/jobs`), ActionJobs))
+        return yield* get(Text.make(`${repoPath(repo)}/actions/runs/${run}/jobs`), ActionJobs).pipe(Effect.map(failedJobNames))
       })
 
       return Gitea.of({ pullRequests, host, runs, failedJobs })

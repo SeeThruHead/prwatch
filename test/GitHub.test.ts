@@ -1,5 +1,5 @@
 import { it as effectIt } from "@effect/vitest"
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { Fingerprint, NodeId, Stdout } from "../src/Brands.ts"
@@ -89,7 +89,19 @@ const probe = (state: string) => ({
 
 const github = (reply: (args: readonly string[]) => unknown) =>
   GitHub.layer.pipe(
-    Layer.provide(Layer.succeed(Shell, Shell.of({ run: (_, args) => Effect.sync(() => Stdout.make(JSON.stringify(reply(args)))) })))
+    Layer.provide(
+      Layer.succeed(
+        Shell,
+        Shell.of({
+          run: (_, args) =>
+            Effect.sync(() => reply(args)).pipe(
+              Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))),
+              Effect.map((text) => Stdout.make(text)),
+              Effect.orDie
+            )
+        })
+      )
+    )
   )
 
 describe("GitHub.stamps", () => {
@@ -113,7 +125,7 @@ describe("GitHub.stamps", () => {
 
 describe("GitHub.pullsById", () => {
   it("fetches only the pull requests asked for, in the role they were stamped with", async () => {
-    const calls = Effect.runSync(Ref.make<readonly (readonly string[])[]>([]))
+    const calls = Ref.makeUnsafe<readonly (readonly string[])[]>([])
     const layer = github((args) => {
       Effect.runSync(Ref.update(calls, (all) => [...all, args]))
       return { data: { viewer: { login: "me" }, nodes: [node("acme/private", true, 3), null] } }

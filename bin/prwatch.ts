@@ -29,6 +29,9 @@ import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
 import { Workspace } from "../src/Workspace.ts"
 
+const printJson = (value: unknown) =>
+  Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(value).pipe(Effect.orDie, Effect.flatMap(Console.log))
+
 const hostFlag = Flag.Literals("host", ["auto", "herdr", "cmux", "orca", "tmux"]).pipe(
   Flag.withDescription("where your agents run; auto picks the first that answers: herdr, cmux, orca, then tmux"),
   Flag.withDefault("auto")
@@ -100,7 +103,8 @@ const terminalsLayer = (host: HostChoice) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const config = yield* RulesConfig
-      return hostLayer(host, planOf(yield* config.delivery).multiplexers)
+      const plan = yield* config.delivery.pipe(Effect.map(planOf))
+      return hostLayer(host, plan.multiplexers)
     })
   )
 
@@ -108,7 +112,7 @@ const deliveryLayer = (host: HostChoice) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const config = yield* RulesConfig
-      const plan = planOf(yield* config.delivery)
+      const plan = yield* config.delivery.pipe(Effect.map(planOf))
       return plan.socket === "off" ? terminalsLayer(host) : withClaudeSessions(terminalsLayer(host), plan.socket)
     })
   ).pipe(Layer.provide(RulesConfig.layer))
@@ -179,7 +183,7 @@ const status = Command.make("status", { json: Flag.Boolean("json").pipe(Flag.wit
     const store = yield* Store
     const current = yield* store.status
     if (current === undefined) return yield* Console.log("no status yet: run prwatch once or prwatch run")
-    if (json) return yield* Console.log(JSON.stringify(current, null, 2))
+    if (json) return yield* printJson(current)
 
     yield* Console.log(
       `updated ${current.updatedAt} via ${current.host}${current.error === undefined ? "" : `\nlast error: ${current.error}`}`
@@ -196,7 +200,7 @@ const PULL_URL = /^https?:\/\/[^/]+\/([\w.-]+\/[\w.-]+)\/pulls?\/(\d+)/
 
 const pullKey = (input: Text) => {
   const url = PULL_URL.exec(input)
-  return Schema.decodeUnknownEffect(PrKey)(url === null ? input : `${url[1]}#${url[2]}`)
+  return Schema.decodeEffect(PrKey)(url === null ? input : `${url[1]}#${url[2]}`)
 }
 
 const pullArgument = Argument.String("pull").pipe(
@@ -230,7 +234,7 @@ const callerPane = Effect.gen(function* () {
 
   const host = yield* Host
   const config = yield* RulesConfig
-  const plan = planOf(yield* config.delivery)
+  const plan = yield* config.delivery.pipe(Effect.map(planOf))
   const terminals = yield* host.agents.pipe(Effect.orElseSucceed((): readonly Agent[] => []))
   const claimed = claimTarget(caller.value, pane === "" ? Option.none() : Option.some(agentId(pane)), terminals, plan.socket)
 
@@ -288,7 +292,7 @@ const claims = Command.make("claims", {}, () =>
 
 const RUN_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/actions\/runs\/(\d+)/
 
-class NotARunUrl extends Schema.TaggedError<NotARunUrl>()("NotARunUrl", { input: Text }) {
+class NotARunUrl extends Schema.TaggedError<NotARunUrl, { readonly brand: unique symbol }>()("NotARunUrl", { input: Text }) {
   override get message() {
     return `${this.input} is not a workflow run URL, like https://github.com/owner/name/actions/runs/123`
   }
@@ -353,7 +357,7 @@ const configShow = Command.make("show", { json: Flag.Boolean("json").pipe(Flag.w
         onSuccess: (located) => ({ rules: located.map(({ rule, file }) => ({ file, rule, summary: describeRule(rule) })) })
       })
 
-      return yield* Console.log(JSON.stringify({ directory: config.dir, machine: config.machine, files, ...loaded }, null, 2))
+      return yield* printJson({ directory: config.dir, machine: config.machine, files, ...loaded })
     }
 
     const located = yield* config.load
