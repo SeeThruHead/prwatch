@@ -21,7 +21,9 @@ import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
 import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
+import { type Multiplexer, planOf } from "../src/Delivery.ts"
 import { type Agent, Host } from "../src/Host.ts"
+import { NoHost } from "../src/hosts/None.ts"
 import { Shell } from "../src/Shell.ts"
 import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
@@ -69,22 +71,47 @@ const answers = (command: "herdr" | "cmux" | "orca", args: readonly ("agent" | "
     )
   )
 
-const detectHost = Effect.gen(function* () {
-  if (yield* answers("herdr", ["agent", "list"])) return HerdrHost
-  if (yield* answers("cmux", ["ping"])) return CmuxHost
-  if (yield* answers("orca", ["terminal", "list", "--json"])) return OrcaHost
+const answersFor = (host: Multiplexer) => {
+  if (host === "herdr") return answers("herdr", ["agent", "list"])
+  if (host === "cmux") return answers("cmux", ["ping"])
+  if (host === "orca") return answers("orca", ["terminal", "list", "--json"])
 
-  return TmuxHost
-})
+  return Effect.succeed(true)
+}
 
-const hostLayer = (host: HostChoice) => {
+const layerOf = (host: Multiplexer) => {
   if (host === "herdr") return HerdrHost
   if (host === "cmux") return CmuxHost
   if (host === "orca") return OrcaHost
-  if (host === "tmux") return TmuxHost
 
-  return Layer.unwrap(detectHost)
+  return TmuxHost
 }
+
+const detectHost = (multiplexers: readonly Multiplexer[]) =>
+  Effect.map(Effect.findFirst(multiplexers, answersFor), (found) => {
+    const host = Option.getOrUndefined(found) ?? multiplexers.at(-1)
+    return host === undefined ? NoHost : layerOf(host)
+  })
+
+const hostLayer = (host: HostChoice, multiplexers: readonly Multiplexer[]) =>
+  host === "auto" ? Layer.unwrap(detectHost(multiplexers)) : layerOf(host)
+
+const terminalsLayer = (host: HostChoice) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const config = yield* RulesConfig
+      return hostLayer(host, planOf(yield* config.delivery).multiplexers)
+    })
+  )
+
+const deliveryLayer = (host: HostChoice) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const config = yield* RulesConfig
+      const plan = planOf(yield* config.delivery)
+      return plan.socket === "off" ? terminalsLayer(host) : withClaudeSessions(terminalsLayer(host), plan.socket)
+    })
+  ).pipe(Layer.provide(RulesConfig.layer))
 
 const sources = Layer.mergeAll(GitHub.layer, Gitea.layer).pipe(
   Layer.provide(Layer.mergeAll(Shell.layer, Store.layer, FetchHttpClient.layer))
@@ -94,7 +121,7 @@ const runsLayer = RunWatcher.layer.pipe(Layer.provide(Layer.mergeAll(RulesConfig
 
 const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(
-    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, runsLayer, withClaudeSessions(hostLayer(host)))),
+    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, runsLayer, deliveryLayer(host))),
     Layer.provide(Shell.layer)
   )
 
@@ -202,12 +229,17 @@ const callerPane = Effect.gen(function* () {
   if (Option.isNone(caller)) return pane
 
   const host = yield* Host
+  const config = yield* RulesConfig
+  const plan = planOf(yield* config.delivery)
   const terminals = yield* host.agents.pipe(Effect.orElseSucceed((): readonly Agent[] => []))
+  const claimed = claimTarget(caller.value, pane === "" ? Option.none() : Option.some(agentId(pane)), terminals, plan.socket)
 
-  return claimTarget(caller.value, pane === "" ? Option.none() : Option.some(agentId(pane)), terminals)
+  return Option.match(claimed, { onNone: () => "", onSome: (id) => id })
 })
 
-const callerLayer = Layer.mergeAll(Store.layer, hostLayer("auto")).pipe(Layer.provide(Shell.layer))
+const callerLayer = Layer.mergeAll(Store.layer, RulesConfig.layer, terminalsLayer("auto").pipe(Layer.provide(RulesConfig.layer))).pipe(
+  Layer.provide(Shell.layer)
+)
 
 const agentFlag = Flag.String("agent").pipe(
   Flag.withDescription(
@@ -219,7 +251,10 @@ const agentFlag = Flag.String("agent").pipe(
 const claim = Command.make("claim", { pulls: pullKeys, agent: agentFlag }, ({ pulls, agent }) =>
   Effect.gen(function* () {
     const pane = agent || (yield* callerPane)
-    if (pane === "") return yield* Console.error("prwatch claim: not inside a herdr, cmux, orca or tmux pane; pass --agent <pane id>")
+    if (pane === "")
+      return yield* Console.error(
+        "prwatch claim: not inside a herdr, cmux, orca or tmux pane that holds this session (and the Claude inbox is not in delivery); pass --agent <pane id>"
+      )
 
     const keys = yield* Effect.forEach(pulls, pullKey)
     yield* Bookkeeping.claim(keys, agentId(pane))
@@ -279,7 +314,10 @@ const runArgument = Argument.String("run").pipe(
 const watchRun = Command.make("watch-run", { run: runArgument, agent: agentFlag }, ({ run, agent }) =>
   Effect.gen(function* () {
     const pane = agent || (yield* callerPane)
-    if (pane === "") return yield* Console.error("prwatch watch-run: not inside a herdr, cmux, orca or tmux pane; pass --agent <pane id>")
+    if (pane === "")
+      return yield* Console.error(
+        "prwatch watch-run: not inside a herdr, cmux, orca or tmux pane that holds this session (and the Claude inbox is not in delivery); pass --agent <pane id>"
+      )
 
     const pending = yield* runPending(run)
     yield* Bookkeeping.watchRun(pending, agentId(pane))
