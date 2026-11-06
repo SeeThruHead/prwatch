@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Config, Console, Duration, Effect, FileSystem, Layer, Option, Schedule, Schema } from "effect"
+import { Config, Console, DateTime, Duration, Effect, FileSystem, Layer, Option, Schedule, Schema } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 
 import pkg from "../package.json" with { type: "json" }
-import { PrKey, Text, agentId } from "../src/Brands.ts"
+import { PrKey, Text, agentId, isoTime } from "../src/Brands.ts"
 import { Activity } from "../src/Activity.ts"
 import { RulesConfig } from "../src/Config.ts"
 import { describeRule } from "../src/Describe.ts"
@@ -121,7 +121,7 @@ const runsLayer = RunWatcher.layer.pipe(Layer.provide(Layer.mergeAll(RulesConfig
 
 const watcherLayer = (host: HostChoice) =>
   Watcher.layer.pipe(
-    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, runsLayer, deliveryLayer(host))),
+    Layer.provide(Layer.mergeAll(sources, Workspace.layer, Store.layer, RulesConfig.layer, runsLayer, deliveryLayer(host))),
     Layer.provide(Shell.layer)
   )
 
@@ -387,6 +387,51 @@ const configTest = Command.make("test", { run: runArgument }, ({ run }) =>
   }).pipe(Effect.provide(configLayer))
 ).pipe(Command.withDescription("show which watch rules match a run, and whether it would reach you"))
 
+const deskOpen = Command.make("open", { agent: agentFlag }, ({ agent }) =>
+  Effect.gen(function* () {
+    const pane = agent || (yield* callerPane)
+    if (pane === "")
+      return yield* Console.error(
+        "prwatch desk open: not inside a herdr, cmux, orca or tmux pane that holds this session; pass --agent <pane id>"
+      )
+
+    const store = yield* Store
+    const desk = yield* (yield* RulesConfig).desk
+    yield* store.saveDesk({ agent: agentId(pane), since: isoTime(yield* DateTime.now), handled: [] })
+    yield* Console.log(
+      desk === undefined || desk.from.length === 0
+        ? `${pane} is the review desk, but nobody can reach it yet: add "desk": { "from": ["login"] } to config.json`
+        : `${pane} is the review desk for review requests from ${desk.from.join(", ")}`
+    )
+  }).pipe(Effect.provide(callerLayer))
+).pipe(Command.withDescription("make this pane the review desk: mentions from people in desk.from arrive here as review requests"))
+
+const deskClose = Command.make("close", {}, () =>
+  Effect.gen(function* () {
+    yield* (yield* Store).closeDesk
+    yield* Console.log("the review desk is closed; review requests only notify you")
+  }).pipe(Effect.provide(Store.layer))
+).pipe(Command.withDescription("stop sending review requests to a pane"))
+
+const deskShow = Command.make("show", {}, () =>
+  Effect.gen(function* () {
+    const desk = yield* (yield* Store).desk
+    const wanted = yield* (yield* RulesConfig).desk
+    const from = wanted === undefined || wanted.from.length === 0 ? "nobody (set desk.from in config.json)" : wanted.from.join(", ")
+
+    yield* Console.log(
+      desk === undefined
+        ? `no review desk is open; requests from ${from} only notify you`
+        : `review desk: ${desk.agent} since ${desk.since}, taking requests from ${from}`
+    )
+  }).pipe(Effect.provide(Layer.mergeAll(Store.layer, RulesConfig.layer)))
+).pipe(Command.withDescription("show which pane is the review desk and whose requests it takes"))
+
+const desk = Command.make("desk").pipe(
+  Command.withDescription("a pane that takes review requests: an @mention from someone on your list claims the pull request for it"),
+  Command.withSubcommands([deskOpen, deskShow, deskClose])
+)
+
 const config = Command.make("config").pipe(
   Command.withDescription("inspect the watch rules"),
   Command.withSubcommands([configPath, configShow, configTest])
@@ -394,7 +439,7 @@ const config = Command.make("config").pipe(
 
 const prwatch = Command.make("prwatch").pipe(
   Command.withDescription("hand new reviews, comments and CI results on your pull requests to the coding agent on that branch"),
-  Command.withSubcommands([run, once, status, ack, claim, release, claims, watchRun, config])
+  Command.withSubcommands([run, once, status, ack, claim, release, claims, watchRun, desk, config])
 )
 
 Command.run(prwatch, { version: pkg.version }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain)

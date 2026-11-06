@@ -184,7 +184,8 @@ export const itemsOf = (fetched: Fetched, viewer: Login): readonly (typeof Item.
           url: review.html_url,
           at: review.submitted_at ?? "",
           state,
-          involvesYou: mentions(review.body, viewer)
+          involvesYou: mentions(review.body, viewer),
+          mentionsYou: mentions(review.body, viewer)
         }
       ]
     }),
@@ -195,7 +196,8 @@ export const itemsOf = (fetched: Fetched, viewer: Login): readonly (typeof Item.
       body: comment.body,
       url: comment.html_url,
       at: comment.created_at,
-      involvesYou: mentions(comment.body, viewer)
+      involvesYou: mentions(comment.body, viewer),
+      mentionsYou: mentions(comment.body, viewer)
     })),
     ...fetched.reviewComments.map((comment) => ({
       id: `gitea-thread-${comment.id}`,
@@ -206,7 +208,8 @@ export const itemsOf = (fetched: Fetched, viewer: Login): readonly (typeof Item.
       at: comment.created_at,
       path: comment.path,
       ...(comment.position > 0 ? { line: comment.position } : {}),
-      involvesYou: yours.has(threadKey(comment)) || mentions(comment.body, viewer)
+      involvesYou: yours.has(threadKey(comment)) || mentions(comment.body, viewer),
+      mentionsYou: mentions(comment.body, viewer)
     }))
   ]
 }

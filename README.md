@@ -67,7 +67,7 @@ prwatch tells you when one of your pull requests enters the merge queue, is remo
 
 ### Pull requests you are reviewing
 
-prwatch also watches open pull requests you have commented on or reviewed but did not open. For those it delivers replies in review threads you are part of, comments that mention you, and new commits pushed after you looked.
+prwatch also watches open pull requests you have commented on, reviewed or been @mentioned in (in the description or a comment) but did not open. For those it delivers replies in review threads you are part of, comments and descriptions that mention you, and new commits pushed after you looked.
 
 An agent gets a pull request's updates when its working directory is that repository on the pull request's branch, on a `pr-<number>` branch, or detached at one of its commits. An agent that reviews many pull requests from one directory claims them instead:
 
@@ -85,6 +85,26 @@ A claim ends by itself when the session or pane goes away, or three days after t
 `--instructions "..."` and `--review-instructions "..."` replace the line appended to messages about your own pull requests and about ones you are reviewing.
 
 Notifications on herdr are silent. Set `PRWATCH_NOTIFY_SOUND` to `done` or `request` in your shell profile to hear one; the menu bar app starts the watcher through your login shell, so it picks the setting up on its next restart.
+
+### The review desk
+
+A review desk is one agent pane that takes review requests while you are away. When someone on your list @mentions you in a pull request's description or in a comment, prwatch claims that pull request for the desk and types the request into it; later updates on that pull request follow it there. You get a notification either way.
+
+List who can reach the desk in `config.json` (or `config.local.json`):
+
+```json
+{ "desk": { "from": ["alex", "jo"] } }
+```
+
+Then, from inside the pane that should take the requests:
+
+```sh
+prwatch desk open     # this pane is the desk; mentions from now on reach it
+prwatch desk show     # which pane is the desk and whose requests it takes
+prwatch desk close    # requests only notify you again
+```
+
+Mentions from anyone not on the list, from bots, and from before the desk opened are left alone, and each mention is sent once. The message carries the request as data and tells the agent to draft the review and post nothing until you approve it. The desk lives on the machine where `prwatch desk open` ran.
 
 ### Runs, deployments and releases
 

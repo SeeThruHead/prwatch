@@ -11,6 +11,9 @@ const node = (nameWithOwner: string, isPrivate: boolean, number: number) => ({
   number,
   title: "A change",
   url: `https://github.com/${nameWithOwner}/pull/${number}`,
+  body: "Adds a change",
+  createdAt: "2026-01-01T00:00:00Z",
+  author: { login: "author", __typename: "User" },
   headRefName: "feature/thing",
   isDraft: false,
   mergeable: "MERGEABLE",
@@ -44,7 +47,8 @@ const response = {
       merged: { nodes: [] }
     },
     commented: { nodes: [node("other/private", true, 3), node("other/public", false, 5)] },
-    reviewed: { nodes: [{ ...node("acme/unknown", true, 4), repository: { nameWithOwner: "acme/unknown" } }] }
+    reviewed: { nodes: [{ ...node("acme/unknown", true, 4), repository: { nameWithOwner: "acme/unknown" } }] },
+    mentioned: { nodes: [] }
   }
 }
 
@@ -83,7 +87,8 @@ const probe = (state: string) => ({
       merged: { nodes: [] }
     },
     commented: { nodes: [stampNode("PR_3", true, null)] },
-    reviewed: { nodes: [stampNode("PR_3", true, null)] }
+    reviewed: { nodes: [stampNode("PR_3", true, null)] },
+    mentioned: { nodes: [] }
   }
 })
 
@@ -163,7 +168,8 @@ const listing = (open: readonly unknown[], merged: readonly unknown[]) => ({
   data: {
     viewer: { login: "me", pullRequests: { nodes: open }, merged: { nodes: merged } },
     commented: { nodes: [] },
-    reviewed: { nodes: [] }
+    reviewed: { nodes: [] },
+    mentioned: { nodes: [] }
   }
 })
 
@@ -220,7 +226,8 @@ describe("GitHub.pullRequests lifecycle", () => {
         data: {
           viewer: { login: "me", pullRequests: { nodes: [] }, merged: { nodes: [] } },
           commented: { nodes: [reviewing] },
-          reviewed: { nodes: [] }
+          reviewed: { nodes: [] },
+          mentioned: { nodes: [] }
         }
       }
       const [pull] = yield* pullsOf(reply)
@@ -252,7 +259,8 @@ describe("GitHub.stamps lifecycle", () => {
                 merged: { nodes: [] }
               },
               commented: { nodes: [] },
-              reviewed: { nodes: [] }
+              reviewed: { nodes: [] },
+              mentioned: { nodes: [] }
             }
           }))
         )

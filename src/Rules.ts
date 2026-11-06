@@ -7,6 +7,7 @@ import {
   FieldPath,
   Glob,
   LinkKind,
+  Login,
   NotifyTarget,
   RegexSource,
   RuleName,
@@ -56,8 +57,12 @@ export type Rule = typeof Rule.Type
 export const Delivery = Schema.NonEmptyArray(HostName)
 export type Delivery = typeof Delivery.Type
 
+export const DeskConfig = Schema.Struct({ from: Schema.Array(Login) })
+export type DeskConfig = typeof DeskConfig.Type
+
 export const WatchRules = Schema.Struct({
   rules: Schema.Array(Rule).pipe(Schema.withDecodingDefault(Effect.succeed<readonly Rule[]>([]))),
-  delivery: Schema.optionalKey(Delivery)
+  delivery: Schema.optionalKey(Delivery),
+  desk: Schema.optionalKey(DeskConfig)
 })
 export type WatchRules = typeof WatchRules.Type

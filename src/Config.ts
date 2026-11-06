@@ -6,7 +6,7 @@ import { FilePath, Hostname, Text } from "./Brands.ts"
 import { globsMatch, lastBy } from "./Fields.ts"
 import { problems } from "./Matcher.ts"
 import { DEFAULT_DELIVERY } from "./Delivery.ts"
-import { type Delivery, type Rule, WatchRules } from "./Rules.ts"
+import { type Delivery, type DeskConfig, type Rule, WatchRules } from "./Rules.ts"
 
 export class RulesInvalid extends Schema.TaggedError<RulesInvalid>()("RulesInvalid", { reasons: Schema.Array(Text) }) {
   override get message() {
@@ -29,6 +29,7 @@ export class RulesConfig extends Context.Service<
     readonly files: readonly FilePath[]
     readonly load: Effect.Effect<readonly Located[], RulesInvalid>
     readonly delivery: Effect.Effect<Delivery, RulesInvalid>
+    readonly desk: Effect.Effect<DeskConfig | undefined, RulesInvalid>
   }
 >()("prwatch/RulesConfig") {
   static readonly layer = Layer.effect(
@@ -71,7 +72,12 @@ export class RulesConfig extends Context.Service<
         Effect.withSpan("RulesConfig.delivery")
       )
 
-      return RulesConfig.of({ dir, machine, files, load, delivery })
+      const desk = Effect.forEach(files, read).pipe(
+        Effect.map((decoded) => decoded.findLast((entry) => entry?.desk !== undefined)?.desk),
+        Effect.withSpan("RulesConfig.desk")
+      )
+
+      return RulesConfig.of({ dir, machine, files, load, delivery, desk })
     })
   )
 }
