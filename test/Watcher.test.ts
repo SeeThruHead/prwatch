@@ -139,8 +139,9 @@ describe("Watcher with a review desk", () => {
       const { afterRequest } = yield* scenario
 
       expect(afterRequest.map((entry) => entry.agent)).toEqual([DESK])
-      expect(afterRequest[0]?.text.split("\n").slice(0, 2)).toEqual([
+      expect(afterRequest[0]?.text.split("\n").slice(0, 3)).toEqual([
         OUTSIDE_HEADER,
+        "",
         "[prwatch] alex requested a review of acme/app#1 (https://github.com/acme/app/pull/1)"
       ])
       expect(afterRequest[0]?.text).not.toContain("approve it")
@@ -162,7 +163,7 @@ describe("Watcher with a review desk", () => {
       const later = all.slice(1)
 
       expect(later.map((entry) => entry.agent)).toEqual([DESK])
-      expect(later[0]?.text.startsWith(`${OUTSIDE_HEADER}\n[prwatch] acme/app#1`)).toBe(true)
+      expect(later[0]?.text.startsWith(`${OUTSIDE_HEADER}\n\n[prwatch] acme/app#1`)).toBe(true)
       expect(notified).toContain("Review requested: acme/app#1")
     })
   )
@@ -280,9 +281,9 @@ describe("Routing from the review desk", () => {
       expect(Object.values(claims).flatMap((entries) => entries.map((entry) => entry.agent))).toEqual([reviewer.id])
       expect(all.slice(1).map((entry) => entry.agent)).toEqual([reviewer.id, reviewer.id])
       expect(all[1]?.text).toBe(
-        `${OUTSIDE_HEADER}\n[prwatch] the review desk routed acme/app#1 (https://github.com/acme/app/pull/1) to you for review\nPost a comment review.`
+        `${OUTSIDE_HEADER}\n\n[prwatch] the review desk routed acme/app#1 (https://github.com/acme/app/pull/1) to you for review\nPost a comment review.`
       )
-      expect(all[2]?.text.startsWith(`${OUTSIDE_HEADER}\n[prwatch] acme/app#1`)).toBe(true)
+      expect(all[2]?.text.startsWith(`${OUTSIDE_HEADER}\n\n[prwatch] acme/app#1`)).toBe(true)
       expect(all[2]?.text.endsWith("Post a comment review.")).toBe(true)
     })
   )
