@@ -39,8 +39,17 @@ const harness = (
   pulls: Ref.Ref<readonly PullRequest[]>,
   sent: Ref.Ref<readonly Sent[]>,
   notified: Ref.Ref<readonly Text[]>,
-  settings: object = DESK_CONFIG
+  settings: object = DESK_CONFIG,
+  githubCalls?: Ref.Ref<number>
 ) => {
+  const counted = <A, E>(effect: Effect.Effect<A, E>) =>
+    githubCalls === undefined
+      ? effect
+      : Effect.andThen(
+          Ref.update(githubCalls, (count) => count + 1),
+          effect
+        )
+  const on = (forge: string) => (current: readonly PullRequest[]) => current.filter((entry) => entry.host === forge)
   const dir = mkdtempSync(join(tmpdir(), "prwatch-watcher-"))
   writeFileSync(join(dir, "config.json"), JSON.stringify(settings))
   const env = ConfigProvider.layer(ConfigProvider.fromUnknown({ PRWATCH_HOME: dir, PRWATCH_CONFIG_DIR: dir, HOME: dir }))
@@ -50,15 +59,15 @@ const harness = (
   const github = Layer.succeed(
     GitHub,
     GitHub.of({
-      pullRequests: Effect.map(Ref.get(pulls), (current) => ({ viewer: Login.make("me"), pulls: current })),
-      stamps: Effect.succeed([]),
-      pullsById: () => Effect.succeed([])
+      pullRequests: counted(Effect.map(Ref.get(pulls), (current) => ({ viewer: Login.make("me"), pulls: on("github.com")(current) }))),
+      stamps: counted(Effect.succeed([])),
+      pullsById: () => counted(Effect.succeed([]))
     })
   )
   const gitea = Layer.succeed(
     Gitea,
     Gitea.of({
-      pullRequests: Effect.succeed({ viewer: Login.make("me"), pulls: [] }),
+      pullRequests: Effect.map(Ref.get(pulls), (current) => ({ viewer: Login.make("me"), pulls: on("gitea.example.lan")(current) })),
       host: Effect.succeed(Option.none()),
       runs: () => Effect.succeed([]),
       failedJobs: () => Effect.succeed([])
@@ -175,6 +184,34 @@ describe("Watcher with ignored repositories", () => {
       expect(status?.pulls.map((entry) => entry.key)).toEqual(["me/tool#4"])
       expect(titles.every((title) => title.startsWith("me/tool#4"))).toBe(true)
       expect(titles.length).toBe(1)
+    })
+  )
+})
+
+describe("Watcher with GitHub turned off", () => {
+  it.effect("never calls GitHub, and still delivers Gitea pull requests", () =>
+    Effect.gen(function* () {
+      const fromGitHub = pull({ id: "PR_5", repo: "me/public", key: "me/public#5", number: 5 })
+      const fromGitea = pull({ id: "gitea-6", host: "gitea.example.lan", repo: "me/home", key: "me/home#6", number: 6 })
+      const pulls = yield* Ref.make<readonly PullRequest[]>([fromGitHub, fromGitea])
+      const sent = yield* Ref.make<readonly Sent[]>([])
+      const notified = yield* Ref.make<readonly Text[]>([])
+      const calls = yield* Ref.make(0)
+      const comment = item({ id: "c11", kind: "comment", author: "jo", body: "Try again" })
+
+      const steps = Effect.gen(function* () {
+        const watcher = yield* Watcher
+        yield* watcher.cycle(options)
+        yield* Ref.set(pulls, [pull({ ...fromGitHub, items: [comment] }), pull({ ...fromGitea, items: [{ ...comment, id: "c12" }] })])
+        yield* watcher.cycle(options)
+
+        return yield* (yield* Store).status
+      })
+      const status = yield* steps.pipe(Effect.provide(harness(pulls, sent, notified, { github: false }, calls)))
+
+      expect(yield* Ref.get(calls)).toBe(0)
+      expect(status?.pulls.map((entry) => entry.key)).toEqual(["me/home#6"])
+      expect(yield* Ref.get(notified)).toEqual(["me/home#6 Add the thing"])
     })
   )
 })

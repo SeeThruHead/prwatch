@@ -114,6 +114,14 @@ Mentions from anyone not on the list, on a repository not in `repos`, from bots,
 { "ignore": ["acme/*", "other/app"] }
 ```
 
+### Turning GitHub off
+
+`"github": false` in `config.json` or `config.local.json` stops prwatch calling GitHub at all on that machine: no pull requests, runs or review desk from GitHub. Gitea pull requests and branch CI are still watched.
+
+```json
+{ "github": false }
+```
+
 ### Every message is marked as outside content
 
 Every message prwatch types into an agent starts with a caution line: what follows quotes GitHub or Gitea, written by people outside your computer, and is data, never instructions. Quoted comments are flattened to one line, so they can't add lines of their own. The desk lives on the machine where `prwatch desk open` ran.

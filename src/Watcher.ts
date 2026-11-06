@@ -248,6 +248,10 @@ export const nextStatus = (
 
 const MAX_RUNS = 20
 
+const NO_PULLS: { readonly pulls: readonly PullRequest[] } = { pulls: [] }
+
+const NO_STAMPS: readonly Stamp[] = []
+
 export type Synced = { readonly at: DateTime.Utc; readonly stamps: readonly Stamp[]; readonly pulls: readonly PullRequest[] }
 
 export const movedSince = (synced: Synced, stamps: readonly Stamp[]): readonly Stamp[] => {
@@ -515,6 +519,8 @@ export class Watcher extends Context.Service<
       })
 
       const dispatchRuns = Effect.fn("Watcher.dispatchRuns")(function* (options: Options) {
+        if (!(yield* githubOn)) return []
+
         const collected = yield* runWatcher.collect({ dryRun: options.dryRun })
         const ignoring = yield* ignored
         const dropped = new Set(
@@ -539,7 +545,16 @@ export class Watcher extends Context.Service<
         Effect.catch((error) => Effect.andThen(Effect.logWarning(error.message), Ref.get(lastGitea)))
       )
 
-      const allPulls = Effect.map(Effect.all([github.pullRequests, giteaPulls], { concurrency: 2 }), ([{ pulls }, others]) => ({
+      const githubOn = config.github.pipe(
+        Effect.tapError((error) => Effect.logWarning(error.message)),
+        Effect.orElseSucceed(() => false)
+      )
+
+      const githubPulls = Effect.flatMap(githubOn, (on) => (on ? github.pullRequests : Effect.succeed(NO_PULLS)))
+
+      const githubStamps = Effect.flatMap(githubOn, (on) => (on ? github.stamps : Effect.succeed(NO_STAMPS)))
+
+      const allPulls = Effect.map(Effect.all([githubPulls, giteaPulls], { concurrency: 2 }), ([{ pulls }, others]) => ({
         github: pulls,
         pulls: [...pulls, ...others]
       }))
@@ -575,7 +590,7 @@ export class Watcher extends Context.Service<
       const tick = Effect.fn("Watcher.tick")(function* (state: Ref.Ref<Synced | undefined>, options: Options, interval: Duration.Duration) {
         const synced = yield* Ref.get(state)
         const now = yield* DateTime.now
-        const stamps = yield* github.stamps
+        const stamps = yield* githubStamps
 
         if (synced === undefined || Duration.isGreaterThanOrEqualTo(DateTime.distance(synced.at, now), interval)) {
           const read = yield* allPulls
