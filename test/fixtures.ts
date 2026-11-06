@@ -11,6 +11,7 @@ export const item = (overrides: Partial<typeof Item.Encoded> & Pick<typeof Item.
     url: `https://github.com/acme/app/pull/1#${overrides.id}`,
     at: "2026-01-01T00:00:00Z",
     involvesYou: false,
+    mentionsYou: false,
     ...overrides
   })
 

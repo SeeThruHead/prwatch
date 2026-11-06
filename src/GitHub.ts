@@ -23,7 +23,7 @@ import {
 } from "./Brands.ts"
 import { type CommandFailed, Shell } from "./Shell.ts"
 
-export const ItemKind = Schema.Literals(["review", "comment", "thread"])
+export const ItemKind = Schema.Literals(["review", "comment", "thread", "description"])
 
 export const Item = Schema.Struct({
   id: NodeId,
@@ -36,7 +36,8 @@ export const Item = Schema.Struct({
   state: Schema.optionalKey(ReviewState),
   path: Schema.optionalKey(FilePath),
   line: Schema.optionalKey(LineNumber),
-  involvesYou: Schema.Boolean
+  involvesYou: Schema.Boolean,
+  mentionsYou: Schema.Boolean
 })
 export type Item = typeof Item.Type
 
@@ -112,6 +113,9 @@ const PullNode = Schema.Struct({
   number: PrNumber,
   title: Text,
   url: Url,
+  body: Markdown,
+  createdAt: IsoTime,
+  author: Author,
   headRefName: Branch,
   isDraft: Schema.Boolean,
   mergeable: MergeableState,
@@ -165,7 +169,8 @@ const ResponseOf = <S extends Schema.Top>(node: S) =>
         merged: Nodes(node)
       }),
       commented: Nodes(Schema.Unknown),
-      reviewed: Nodes(Schema.Unknown)
+      reviewed: Nodes(Schema.Unknown),
+      mentioned: Nodes(Schema.Unknown)
     })
   })
 
@@ -179,7 +184,7 @@ const ByIdResponse = Schema.Struct({
 const LIFECYCLE_TYPES = "[ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT, MERGED_EVENT]"
 
 const FIELDS = `
-  id number title url headRefName isDraft mergeable reviewDecision isInMergeQueue mergedAt
+  id number title url body createdAt author { login __typename } headRefName isDraft mergeable reviewDecision isInMergeQueue mergedAt
   lifecycle: timelineItems(last: 30, itemTypes: ${LIFECYCLE_TYPES}) {
     nodes {
       __typename
@@ -212,7 +217,11 @@ type Query = typeof Query.Type
 
 type Fields = typeof FIELDS | typeof STAMP_FIELDS
 
-const reviewing = (alias: "commented" | "reviewed", qualifier: "commenter:@me" | "reviewed-by:@me", fields: Fields) =>
+const reviewing = (
+  alias: "commented" | "reviewed" | "mentioned",
+  qualifier: "commenter:@me" | "reviewed-by:@me" | "mentions:@me",
+  fields: Fields
+) =>
   `${alias}: search(query: "is:pr is:open -author:@me ${qualifier}", type: ISSUE, first: 30) { nodes { ... on PullRequest { ${fields} } } }`
 
 const queryOf = (fields: Fields) =>
@@ -224,6 +233,7 @@ const queryOf = (fields: Fields) =>
   }
   ${reviewing("commented", "commenter:@me", fields)}
   ${reviewing("reviewed", "reviewed-by:@me", fields)}
+  ${reviewing("mentioned", "mentions:@me", fields)}
 }`)
 
 const QUERY = queryOf(FIELDS)
@@ -290,7 +300,19 @@ const stampOf = ({ node, role }: { readonly node: typeof StampNode.Type; readonl
 
 export const mentions = (body: Markdown, viewer: Login) => body.toLowerCase().includes(`@${viewer.toLowerCase()}`)
 
+const descriptionOf = (pull: Pull, viewer: Login): Item => ({
+  id: pull.id,
+  kind: "description",
+  ...authorOf(pull.author),
+  body: pull.body,
+  url: pull.url,
+  at: pull.createdAt,
+  involvesYou: mentions(pull.body, viewer),
+  mentionsYou: mentions(pull.body, viewer)
+})
+
 const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
+  descriptionOf(pull, viewer),
   ...pull.reviews.nodes.flatMap((review) =>
     review.state === "PENDING" || review.submittedAt === null
       ? []
@@ -303,7 +325,8 @@ const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
             url: review.url,
             at: review.submittedAt,
             state: review.state,
-            involvesYou: mentions(review.body, viewer)
+            involvesYou: mentions(review.body, viewer),
+            mentionsYou: mentions(review.body, viewer)
           }
         ]
   ),
@@ -314,7 +337,8 @@ const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
     body: comment.body,
     url: comment.url,
     at: comment.createdAt,
-    involvesYou: mentions(comment.body, viewer)
+    involvesYou: mentions(comment.body, viewer),
+    mentionsYou: mentions(comment.body, viewer)
   })),
   ...pull.reviewThreads.nodes.flatMap((thread) => {
     const yours = thread.comments.nodes.some((comment) => comment.author?.login === viewer)
@@ -328,7 +352,8 @@ const itemsOf = (pull: Pull, viewer: Login): readonly Item[] => [
       at: comment.createdAt,
       path: thread.path,
       ...(thread.line === null ? {} : { line: thread.line }),
-      involvesYou: yours || mentions(comment.body, viewer)
+      involvesYou: yours || mentions(comment.body, viewer),
+      mentionsYou: mentions(comment.body, viewer)
     }))
   })
 ]
@@ -420,7 +445,7 @@ export class GitHub extends Context.Service<
           const viewer = data.viewer.login
           const pulls = withRoles(
             [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
-            [...data.commented.nodes, ...data.reviewed.nodes],
+            [...data.commented.nodes, ...data.reviewed.nodes, ...data.mentioned.nodes],
             Schema.decodeUnknownOption(PullNode)
           ).map(({ node, role }) => toPullRequest(viewer, role)(node))
 
@@ -436,7 +461,7 @@ export class GitHub extends Context.Service<
         Effect.map(([{ data }, now]) =>
           withRoles(
             [...data.viewer.pullRequests.nodes, ...data.viewer.merged.nodes.filter(mergedWithin(now))],
-            [...data.commented.nodes, ...data.reviewed.nodes],
+            [...data.commented.nodes, ...data.reviewed.nodes, ...data.mentioned.nodes],
             Schema.decodeUnknownOption(StampNode)
           ).map(stampOf)
         ),

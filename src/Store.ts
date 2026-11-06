@@ -3,6 +3,7 @@ import { Config, Context, Effect, FileSystem, Layer, Path, Schema } from "effect
 import { AgentId, Count, FilePath, HostName, IsoTime, PrKey, ReviewDecision, Text, Url } from "./Brands.ts"
 import { Seen } from "./Changes.ts"
 import { SeenBranches } from "./Branches.ts"
+import { DeskState } from "./Desk.ts"
 import { Checks, Mergeable, Role } from "./GitHub.ts"
 import { RunState, StatusRun } from "./RunState.ts"
 
@@ -47,7 +48,7 @@ export class StoreUnwritable extends Schema.TaggedError<StoreUnwritable>()("Stor
   }
 }
 
-type StoreFile = "seen.json" | "status.json" | "claims.json" | "runs.json" | "branches.json"
+type StoreFile = "seen.json" | "status.json" | "claims.json" | "runs.json" | "branches.json" | "desk.json"
 
 export class Store extends Context.Service<
   Store,
@@ -63,6 +64,9 @@ export class Store extends Context.Service<
     readonly saveClaims: (claims: Claims) => Effect.Effect<void, StoreUnwritable>
     readonly runs: Effect.Effect<RunState | undefined>
     readonly saveRuns: (runs: RunState) => Effect.Effect<void, StoreUnwritable>
+    readonly desk: Effect.Effect<DeskState | undefined>
+    readonly saveDesk: (desk: DeskState) => Effect.Effect<void, StoreUnwritable>
+    readonly closeDesk: Effect.Effect<void, StoreUnwritable>
   }
 >()("prwatch/Store") {
   static readonly layer = Layer.effect(
@@ -93,6 +97,12 @@ export class Store extends Context.Service<
         )
       }
 
+      const deskFile = FilePath.make(path.join(home, "desk.json"))
+
+      const closeDesk = fs
+        .remove(deskFile, { force: true })
+        .pipe(Effect.mapError((error) => new StoreUnwritable({ path: deskFile, reason: Text.make(error.message) })))
+
       return Store.of({
         home,
         seen: read("seen.json", Seen),
@@ -104,7 +114,10 @@ export class Store extends Context.Service<
         claims: Effect.map(read("claims.json", Claims), (claims) => claims ?? {}),
         saveClaims: (claims) => write("claims.json", Claims, claims),
         runs: read("runs.json", RunState),
-        saveRuns: (runs) => write("runs.json", RunState, runs)
+        saveRuns: (runs) => write("runs.json", RunState, runs),
+        desk: read("desk.json", DeskState),
+        saveDesk: (desk) => write("desk.json", DeskState, desk),
+        closeDesk
       })
     })
   )

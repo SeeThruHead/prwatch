@@ -2,6 +2,8 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Sch
 
 import { type BranchChange, type BranchKey, type Pending, type SeenBranches, branchChanges, branchKey } from "./Branches.ts"
 import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
+import { RulesConfig } from "./Config.ts"
+import { type ReviewRequest, handledAfter, requesters, reviewRequests } from "./Desk.ts"
 import { Gitea } from "./Gitea.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
@@ -21,10 +23,13 @@ import {
 } from "./Brands.ts"
 import {
   BRANCH_INSTRUCTIONS,
+  DESK_INSTRUCTIONS,
   RUN_INSTRUCTIONS,
   agentMessage,
   branchMessage,
   branchNotification,
+  deskMessage,
+  deskNotification,
   notification,
   runMessage,
   runNotification,
@@ -99,6 +104,26 @@ export const runRecipients = (delivery: RunDelivery, found: Found, claims: Claim
   if (delivery.linked.claimantsOnly) return byClaim.filter(reachable)
 
   return [...byClaim, ...found.placed.filter(onRun(delivery)).filter((agent) => !isClaimed(agent))].filter(reachable)
+}
+
+export const claimedFor = (claims: Claims, requests: readonly ReviewRequest[], agent: AgentId, at: IsoTime): Claims => ({
+  ...claims,
+  ...Object.fromEntries(
+    requests.map(({ pull }) => [pull.key, [...(claims[pull.key] ?? []).filter((entry) => entry.agent !== agent), { agent, at }]] as const)
+  )
+})
+
+export const withoutDesk = (
+  deliveries: readonly Delivery[],
+  served: readonly ReviewRequest[],
+  desk: Agent | undefined
+): readonly Delivery[] => {
+  if (desk === undefined) return deliveries
+  const keys = new Set(served.map((request) => request.pull.key))
+
+  return deliveries.map((delivery) =>
+    keys.has(delivery.pull.key) ? { ...delivery, agents: delivery.agents.filter((agent) => agent.id !== desk.id) } : delivery
+  )
 }
 
 const plan = (pulls: readonly PullRequest[], seen: Seen | undefined, found: Found, claims: Claims): readonly Delivery[] =>
@@ -255,6 +280,7 @@ export class Watcher extends Context.Service<
       const workspace = yield* Workspace
       const store = yield* Store
       const runWatcher = yield* RunWatcher
+      const config = yield* RulesConfig
 
       const placed = Effect.fn("Watcher.placed")(function* () {
         const agents = yield* host.agents.pipe(
@@ -375,16 +401,59 @@ export class Watcher extends Context.Service<
         yield* store.saveBranches(keptBranches(seen, targets, Object.fromEntries(read.map((entry) => [entry.target.key, entry.next]))))
       })
 
+      const sendRequest = Effect.fn("Watcher.sendRequest")(function* (request: ReviewRequest, desk: Agent | undefined, dryRun: boolean) {
+        const message = deskMessage(request.pull, request.items, DESK_INSTRUCTIONS)
+        const { title, body } = deskNotification(request.pull, requesters(request), desk !== undefined)
+
+        if (dryRun) return yield* Effect.log(`[dry run] to ${desk?.label ?? "nobody"} + notify\n${message}`)
+
+        if (desk !== undefined)
+          yield* host.deliver(desk.id, message).pipe(
+            Effect.tapError((error) => Effect.logWarning(error.message)),
+            Effect.ignore
+          )
+        yield* host.notify(title, body)
+      })
+
+      const serveDesk = Effect.fn("Watcher.serveDesk")(function* (
+        pulls: readonly PullRequest[],
+        found: Found,
+        claims: Claims,
+        at: IsoTime,
+        dryRun: boolean
+      ) {
+        const nothing = { claims, served: [], desk: undefined }
+        const wanted = yield* config.desk.pipe(
+          Effect.tapError((error) => Effect.logWarning(error.message)),
+          Effect.orElseSucceed(() => undefined)
+        )
+        const state = yield* store.desk
+        if (wanted === undefined || state === undefined) return nothing
+
+        const requests = reviewRequests(pulls, wanted.from, state)
+        if (requests.length === 0) return nothing
+
+        const desk = found.agents.filter(reachable).find((agent) => answersTo(agent).includes(state.agent))
+        yield* Effect.forEach(requests, (request) => sendRequest(request, desk, dryRun), { discard: true })
+        if (dryRun) return nothing
+
+        yield* store.saveDesk(handledAfter(state, requests))
+        if (desk === undefined) return nothing
+
+        return { claims: claimedFor(claims, requests, state.agent, at), served: requests, desk }
+      })
+
       const dispatch = Effect.fn("Watcher.dispatch")(function* (pulls: readonly PullRequest[], options: Options) {
-        const [seen, previous, found, claims] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
-        const deliveries = plan(pulls, seen, found, claims)
+        const [seen, previous, found, before] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
         const at = isoTime(yield* DateTime.now)
+        const { claims, served, desk } = yield* serveDesk(pulls, found, before, at, options.dryRun)
+        const deliveries = withoutDesk(plan(pulls, seen, found, claims), served, desk)
 
         yield* Effect.forEach(deliveries, (delivery) => send(delivery, options), { discard: true })
         if (options.dryRun) return deliveries
 
         yield* store.saveSeen(nextSeen(pulls, seen))
-        if (found.agents.length > 0)
+        if (found.agents.length > 0 || served.length > 0)
           yield* store.saveClaims(
             liveClaims(claims, pulls, found.agents, isoTime(DateTime.subtractDuration(yield* DateTime.now, CLAIM_AFTER_CLOSE)))
           )

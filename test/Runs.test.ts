@@ -34,6 +34,7 @@ const harness = (
         machine: host,
         files: [],
         delivery: Effect.succeed(DEFAULT_DELIVERY),
+        desk: Effect.succeed(undefined),
         load: Effect.succeed(rules.map((entry) => ({ rule: entry, file: FilePath.make(`${dir}/config.json`) })))
       })
     )
