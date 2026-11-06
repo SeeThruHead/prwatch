@@ -37,7 +37,7 @@ describe("reviewer pull requests", () => {
 
   it("say the user is reviewing", () => {
     expect(agentMessage(reviewing, [{ kind: "pushed", head: Sha.make("fff9999abc") }], Text.make("Draft it."))).toContain(
-      "which the user is reviewing, has updates:\n- new commits pushed, head is now fff9999"
+      "which the user is reviewing, has updates:\nhttps://github.com/acme/app/pull/1\n\n- new commits pushed, head is now fff9999"
     )
   })
 })
