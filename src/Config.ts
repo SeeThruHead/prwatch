@@ -2,7 +2,7 @@ import { hostname } from "node:os"
 
 import { Config, Context, Effect, FileSystem, Layer, Path, Schema } from "effect"
 
-import { FilePath, Hostname, Text } from "./Brands.ts"
+import { FilePath, type Glob, Hostname, Text } from "./Brands.ts"
 import { globsMatch, lastBy } from "./Fields.ts"
 import { problems } from "./Matcher.ts"
 import { DEFAULT_DELIVERY } from "./Delivery.ts"
@@ -30,6 +30,7 @@ export class RulesConfig extends Context.Service<
     readonly load: Effect.Effect<readonly Located[], RulesInvalid>
     readonly delivery: Effect.Effect<Delivery, RulesInvalid>
     readonly desk: Effect.Effect<DeskConfig | undefined, RulesInvalid>
+    readonly ignore: Effect.Effect<readonly Glob[], RulesInvalid>
   }
 >()("prwatch/RulesConfig") {
   static readonly layer = Layer.effect(
@@ -77,7 +78,12 @@ export class RulesConfig extends Context.Service<
         Effect.withSpan("RulesConfig.desk")
       )
 
-      return RulesConfig.of({ dir, machine, files, load, delivery, desk })
+      const ignore = Effect.forEach(files, read).pipe(
+        Effect.map((decoded): readonly Glob[] => decoded.findLast((entry) => entry?.ignore !== undefined)?.ignore ?? []),
+        Effect.withSpan("RulesConfig.ignore")
+      )
+
+      return RulesConfig.of({ dir, machine, files, load, delivery, desk, ignore })
     })
   )
 }

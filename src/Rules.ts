@@ -63,6 +63,7 @@ export type DeskConfig = typeof DeskConfig.Type
 export const WatchRules = Schema.Struct({
   rules: Schema.Array(Rule).pipe(Schema.withDecodingDefault(Effect.succeed<readonly Rule[]>([]))),
   delivery: Schema.optionalKey(Delivery),
-  desk: Schema.optionalKey(DeskConfig)
+  desk: Schema.optionalKey(DeskConfig),
+  ignore: Schema.optionalKey(Schema.Array(Glob))
 })
 export type WatchRules = typeof WatchRules.Type
