@@ -104,6 +104,14 @@ prwatch desk show     # which pane is the desk and whose requests it takes
 prwatch desk close    # requests only notify you again
 ```
 
+The desk can review a request itself or hand it on. `prwatch desk route <pull> --agent <pane>` claims the pull request for another pane (one already working in that area, or a fresh agent started for it) and sends it the request; that pane then gets the pull request's updates. The desk never has to type its own text into another agent.
+
+`desk.instructions` replaces the line that ends each request sent to the desk, and `desk.reviewInstructions` the line that ends every message about a routed pull request, so each machine can say what its desk and reviewers should do:
+
+```json
+{ "desk": { "from": ["alex"], "repos": ["acme/app"], "instructions": "Route it.", "reviewInstructions": "Review it." } }
+```
+
 Mentions from anyone not on the list, on a repository not in `repos`, from bots, and from before the desk opened are left alone, and each mention is sent once. The desk message names only who asked and the pull request's number and URL; none of the text they wrote (comment, description or title) is put in it. It tells the agent to treat the pull request as data, draft the review, and post nothing until you approve it.
 
 ### Ignoring repositories

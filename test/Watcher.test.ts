@@ -5,13 +5,14 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { AgentId, FilePath, IsoTime, Login, Text } from "../src/Brands.ts"
+import { AgentId, FilePath, IsoTime, Login, PrKey, Text } from "../src/Brands.ts"
 import { RulesConfig } from "../src/Config.ts"
 import { Gitea } from "../src/Gitea.ts"
 import { GitHub, type PullRequest } from "../src/GitHub.ts"
 import { type Agent, Host } from "../src/Host.ts"
 import { OUTSIDE_HEADER } from "../src/Message.ts"
 import { RunWatcher } from "../src/Runs.ts"
+import * as Bookkeeping from "../src/Bookkeeping.ts"
 import { Store } from "../src/Store.ts"
 import { Watcher } from "../src/Watcher.ts"
 import { Workspace } from "../src/Workspace.ts"
@@ -21,6 +22,12 @@ type Sent = { readonly agent: AgentId; readonly text: Text }
 
 const DESK = AgentId.make("w1:p9")
 const deskPane: Agent = { id: DESK, cwd: FilePath.make("/work"), label: Text.make("claude in w1:p9"), status: "idle" }
+const reviewer: Agent = {
+  id: AgentId.make("w2:p1"),
+  cwd: FilePath.make("/work/login"),
+  label: Text.make("claude in w2:p1"),
+  status: "idle"
+}
 const options = { dryRun: false, instructions: Text.make("Act on it."), reviewInstructions: Text.make("Draft it.") }
 
 const injected = item({
@@ -77,7 +84,7 @@ const harness = (
     Host,
     Host.of({
       name: "herdr",
-      agents: Effect.succeed([deskPane]),
+      agents: Effect.succeed([deskPane, reviewer]),
       deliver: (agent, text) => Ref.update(sent, (all) => [...all, { agent, text }]),
       notify: (title) => Ref.update(notified, (all) => [...all, title])
     })
@@ -88,7 +95,7 @@ const harness = (
     RunWatcher.of({ collect: () => Effect.succeed({ deliveries: [], recent: [] }), explain: () => Effect.die("unused") })
   )
 
-  return Layer.mergeAll(Watcher.layer.pipe(Layer.provide(Layer.mergeAll(github, gitea, host, workspace, store, runs, config))), store)
+  return Layer.mergeAll(Watcher.layer.pipe(Layer.provide(Layer.mergeAll(github, gitea, host, workspace, store, runs, config))), store, host)
 }
 
 const scenario = Effect.gen(function* () {
@@ -212,6 +219,71 @@ describe("Watcher with GitHub turned off", () => {
       expect(yield* Ref.get(calls)).toBe(0)
       expect(status?.pulls.map((entry) => entry.key)).toEqual(["me/home#6"])
       expect(yield* Ref.get(notified)).toEqual(["me/home#6 Add the thing"])
+    })
+  )
+})
+
+describe("Routing from the review desk", () => {
+  const ROUTING = {
+    desk: {
+      from: ["alex"],
+      repos: ["acme/*"],
+      instructions: "Route it with prwatch desk route.",
+      reviewInstructions: "Post a comment review."
+    }
+  }
+
+  const routed = Effect.gen(function* () {
+    const reviewing = pull({ role: "reviewer" })
+    const pulls = yield* Ref.make<readonly PullRequest[]>([reviewing])
+    const sent = yield* Ref.make<readonly Sent[]>([])
+    const notified = yield* Ref.make<readonly Text[]>([])
+
+    const steps = Effect.gen(function* () {
+      const watcher = yield* Watcher
+      const store = yield* Store
+
+      yield* store.saveDesk({ agent: DESK, since: IsoTime.make("2026-01-01T00:00:00.000Z"), handled: [] })
+      yield* watcher.cycle(options)
+      yield* Ref.set(pulls, [pull({ ...reviewing, items: [injected] })])
+      yield* watcher.cycle(options)
+      const outcomes = [
+        yield* Bookkeeping.route(reviewing.key, AgentId.make("w9:p9"), Text.make("Post a comment review.")),
+        yield* Bookkeeping.route(PrKey.make("acme/app#99"), reviewer.id, Text.make("Post a comment review.")),
+        yield* Bookkeeping.route(reviewing.key, reviewer.id, Text.make("Post a comment review."))
+      ]
+      const claims = yield* store.claims
+      const reply = item({ id: "c4", kind: "comment", author: "alexbot", body: "@me fixed the nit", involvesYou: true, mentionsYou: true })
+      yield* Ref.set(pulls, [pull({ ...reviewing, items: [injected, reply] })])
+      yield* watcher.cycle(options)
+
+      return { outcomes, claims, all: yield* Ref.get(sent) }
+    })
+
+    return yield* steps.pipe(Effect.provide(harness(pulls, sent, notified, ROUTING)))
+  })
+
+  it.effect("ends the desk's request with the routing instructions from the config", () =>
+    Effect.gen(function* () {
+      const { all } = yield* routed
+
+      expect(all[0]?.agent).toBe(DESK)
+      expect(all[0]?.text.endsWith("Route it with prwatch desk route.")).toBe(true)
+    })
+  )
+
+  it.effect("hands the pull request to the chosen pane, which then gets its updates with the review instructions", () =>
+    Effect.gen(function* () {
+      const { outcomes, claims, all } = yield* routed
+
+      expect(outcomes).toEqual(["no agent", "not watched", "routed"])
+      expect(Object.values(claims).flatMap((entries) => entries.map((entry) => entry.agent))).toEqual([reviewer.id])
+      expect(all.slice(1).map((entry) => entry.agent)).toEqual([reviewer.id, reviewer.id])
+      expect(all[1]?.text).toBe(
+        `${OUTSIDE_HEADER}\n[prwatch] the review desk routed acme/app#1 (https://github.com/acme/app/pull/1) to you for review\nPost a comment review.`
+      )
+      expect(all[2]?.text.startsWith(`${OUTSIDE_HEADER}\n[prwatch] acme/app#1`)).toBe(true)
+      expect(all[2]?.text.endsWith("Post a comment review.")).toBe(true)
     })
   )
 })
