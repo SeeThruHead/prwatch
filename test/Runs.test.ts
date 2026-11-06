@@ -36,6 +36,7 @@ const harness = (
         delivery: Effect.succeed(DEFAULT_DELIVERY),
         desk: Effect.succeed(undefined),
         ignore: Effect.succeed([]),
+        github: Effect.succeed(true),
         load: Effect.succeed(rules.map((entry) => ({ rule: entry, file: FilePath.make(`${dir}/config.json`) })))
       })
     )

@@ -31,6 +31,7 @@ export class RulesConfig extends Context.Service<
     readonly delivery: Effect.Effect<Delivery, RulesInvalid>
     readonly desk: Effect.Effect<DeskConfig | undefined, RulesInvalid>
     readonly ignore: Effect.Effect<readonly Glob[], RulesInvalid>
+    readonly github: Effect.Effect<boolean, RulesInvalid>
   }
 >()("prwatch/RulesConfig") {
   static readonly layer = Layer.effect(
@@ -83,7 +84,12 @@ export class RulesConfig extends Context.Service<
         Effect.withSpan("RulesConfig.ignore")
       )
 
-      return RulesConfig.of({ dir, machine, files, load, delivery, desk, ignore })
+      const github = Effect.forEach(files, read).pipe(
+        Effect.map((decoded) => decoded.findLast((entry) => entry?.github !== undefined)?.github ?? true),
+        Effect.withSpan("RulesConfig.github")
+      )
+
+      return RulesConfig.of({ dir, machine, files, load, delivery, desk, ignore, github })
     })
   )
 }

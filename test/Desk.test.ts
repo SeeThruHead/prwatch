@@ -150,6 +150,20 @@ describe("desk config", () => {
     }).pipe(Effect.provide(configured({ "config.json": { ignore: ["acme/*"] }, "config.local.json": { ignore: ["work/*"] } })))
   )
 
+  effectIt.effect("leaves GitHub on unless a file turns it off, with config.local.json replacing config.json", () =>
+    Effect.gen(function* () {
+      const config = yield* RulesConfig
+      expect(yield* config.github).toBe(false)
+    }).pipe(Effect.provide(configured({ "config.json": { github: true }, "config.local.json": { github: false } })))
+  )
+
+  effectIt.effect("has GitHub on when no file mentions it", () =>
+    Effect.gen(function* () {
+      const config = yield* RulesConfig
+      expect(yield* config.github).toBe(true)
+    }).pipe(Effect.provide(configured({ "config.json": { rules: [] } })))
+  )
+
   effectIt.effect("has no desk when neither file sets one", () =>
     Effect.gen(function* () {
       const config = yield* RulesConfig
