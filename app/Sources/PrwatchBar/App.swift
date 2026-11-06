@@ -78,6 +78,7 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var item: NSStatusItem?
   private var subscription: AnyCancellable?
   private var closedAt = Date.distantPast
+  private var outsideClicks: Any?
 
   // A transient popover closes on the mouse-down of a click on the status
   // item, then the button action fires on mouse-up and would reopen it.
@@ -176,9 +177,20 @@ final class StatusBarController: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.contentViewController?.view.window?.makeKey()
   }
 
+  // AppKit closes a transient popover on a click inside its own app or when the
+  // app deactivates. An accessory app that was never activated sees neither when
+  // the user clicks another app, so those clicks are watched for directly.
+  func popoverDidShow(_ notification: Notification) {
+    outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+      Task { @MainActor in self?.popover.performClose(nil) }
+    }
+  }
+
   func popoverDidClose(_ notification: Notification) {
     closedAt = Date()
     anchor.orderOut(nil)
+    if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
+    outsideClicks = nil
   }
 }
 
