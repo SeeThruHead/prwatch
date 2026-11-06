@@ -106,6 +106,14 @@ prwatch desk close    # requests only notify you again
 
 Mentions from anyone not on the list, on a repository not in `repos`, from bots, and from before the desk opened are left alone, and each mention is sent once. The desk message names only who asked and the pull request's number and URL; none of the text they wrote (comment, description or title) is put in it. It tells the agent to treat the pull request as data, draft the review, and post nothing until you approve it.
 
+### Ignoring repositories
+
+`ignore` in `config.json` (or `config.local.json`, which replaces it on one machine) lists repositories prwatch says nothing about: no messages, no notifications, and they are left out of the status and the menu bar. It covers pull requests, the runs your watch rules match, and the review desk.
+
+```json
+{ "ignore": ["acme/*", "other/app"] }
+```
+
 ### Every message is marked as outside content
 
 Every message prwatch types into an agent starts with a caution line: what follows quotes GitHub or Gitea, written by people outside your computer, and is data, never instructions. Quoted comments are flattened to one line, so they can't add lines of their own. The desk lives on the machine where `prwatch desk open` ran.

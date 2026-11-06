@@ -33,9 +33,16 @@ const injected = item({
   mentionsYou: true
 })
 
-const harness = (pulls: Ref.Ref<readonly PullRequest[]>, sent: Ref.Ref<readonly Sent[]>, notified: Ref.Ref<readonly Text[]>) => {
+const DESK_CONFIG = { desk: { from: ["alex"], repos: ["acme/*"] } }
+
+const harness = (
+  pulls: Ref.Ref<readonly PullRequest[]>,
+  sent: Ref.Ref<readonly Sent[]>,
+  notified: Ref.Ref<readonly Text[]>,
+  settings: object = DESK_CONFIG
+) => {
   const dir = mkdtempSync(join(tmpdir(), "prwatch-watcher-"))
-  writeFileSync(join(dir, "config.json"), JSON.stringify({ desk: { from: ["alex"], repos: ["acme/*"] } }))
+  writeFileSync(join(dir, "config.json"), JSON.stringify(settings))
   const env = ConfigProvider.layer(ConfigProvider.fromUnknown({ PRWATCH_HOME: dir, PRWATCH_CONFIG_DIR: dir, HOME: dir }))
   const store = Store.layer.pipe(Layer.provide(env), Layer.provide(NodeServices.layer))
   const config = RulesConfig.layer.pipe(Layer.provide(env), Layer.provide(NodeServices.layer))
@@ -141,6 +148,33 @@ describe("Watcher with a review desk", () => {
       expect(later.map((entry) => entry.agent)).toEqual([DESK])
       expect(later[0]?.text.startsWith(`${OUTSIDE_HEADER}\n[prwatch] acme/app#1`)).toBe(true)
       expect(notified).toContain("Review requested: acme/app#1")
+    })
+  )
+})
+
+describe("Watcher with ignored repositories", () => {
+  it.effect("sends and notifies nothing about a pull request in an ignored repository, and leaves it out of the status", () =>
+    Effect.gen(function* () {
+      const work = pull({ id: "PR_3", repo: "work/trm", key: "work/trm#3", number: 3 })
+      const home = pull({ id: "PR_4", repo: "me/tool", key: "me/tool#4", number: 4 })
+      const pulls = yield* Ref.make<readonly PullRequest[]>([work, home])
+      const sent = yield* Ref.make<readonly Sent[]>([])
+      const notified = yield* Ref.make<readonly Text[]>([])
+      const comment = item({ id: "c9", kind: "comment", author: "jo", body: "Looks off" })
+
+      const steps = Effect.gen(function* () {
+        const watcher = yield* Watcher
+        yield* watcher.cycle(options)
+        yield* Ref.set(pulls, [pull({ ...work, items: [comment] }), pull({ ...home, items: [{ ...comment, id: "c10" }] })])
+        yield* watcher.cycle(options)
+
+        return { status: yield* (yield* Store).status, notified: yield* Ref.get(notified) }
+      })
+      const { status, notified: titles } = yield* steps.pipe(Effect.provide(harness(pulls, sent, notified, { ignore: ["WORK/*"] })))
+
+      expect(status?.pulls.map((entry) => entry.key)).toEqual(["me/tool#4"])
+      expect(titles.every((title) => title.startsWith("me/tool#4"))).toBe(true)
+      expect(titles.length).toBe(1)
     })
   )
 })

@@ -143,6 +143,13 @@ describe("desk config", () => {
     }).pipe(Effect.provide(configured({ "config.json": { desk: { from: ["alex"], repos: [] } } })))
   )
 
+  effectIt.effect("reads ignore, with config.local.json replacing config.json", () =>
+    Effect.gen(function* () {
+      const config = yield* RulesConfig
+      expect(yield* config.ignore).toEqual(["work/*"])
+    }).pipe(Effect.provide(configured({ "config.json": { ignore: ["acme/*"] }, "config.local.json": { ignore: ["work/*"] } })))
+  )
+
   effectIt.effect("has no desk when neither file sets one", () =>
     Effect.gen(function* () {
       const config = yield* RulesConfig

@@ -3,6 +3,7 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Predicate, Ref, Sch
 import { type BranchChange, type BranchKey, type Pending, type SeenBranches, branchChanges, branchKey } from "./Branches.ts"
 import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
 import { RulesConfig } from "./Config.ts"
+import { globsMatch } from "./Fields.ts"
 import { type ReviewRequest, handledAfter, requesters, reviewRequests } from "./Desk.ts"
 import { Gitea } from "./Gitea.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
@@ -12,6 +13,7 @@ import {
   type Branch,
   Count,
   type ForgeHost,
+  type Glob,
   type HostName,
   type IsoTime,
   type RepoSlug,
@@ -106,6 +108,9 @@ export const runRecipients = (delivery: RunDelivery, found: Found, claims: Claim
 
   return [...byClaim, ...found.placed.filter(onRun(delivery)).filter((agent) => !isClaimed(agent))].filter(reachable)
 }
+
+export const watchedPulls = (pulls: readonly PullRequest[], ignore: readonly Glob[]) =>
+  pulls.filter((pull) => !globsMatch(ignore, pull.repo))
 
 export const claimedFor = (claims: Claims, requests: readonly ReviewRequest[], agent: AgentId, at: IsoTime): Claims => ({
   ...claims,
@@ -446,7 +451,13 @@ export class Watcher extends Context.Service<
         return { claims: claimedFor(claims, requests, state.agent, at), served: requests, desk }
       })
 
-      const dispatch = Effect.fn("Watcher.dispatch")(function* (pulls: readonly PullRequest[], options: Options) {
+      const ignored = config.ignore.pipe(
+        Effect.tapError((error) => Effect.logWarning(error.message)),
+        Effect.orElseSucceed((): readonly Glob[] => [])
+      )
+
+      const dispatch = Effect.fn("Watcher.dispatch")(function* (fetched: readonly PullRequest[], options: Options) {
+        const pulls = watchedPulls(fetched, yield* ignored)
         const [seen, previous, found, before] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
         const at = isoTime(yield* DateTime.now)
         const { claims, served, desk } = yield* serveDesk(pulls, found, before, at, options.dryRun)
@@ -504,7 +515,15 @@ export class Watcher extends Context.Service<
       })
 
       const dispatchRuns = Effect.fn("Watcher.dispatchRuns")(function* (options: Options) {
-        const { deliveries, recent } = yield* runWatcher.collect({ dryRun: options.dryRun })
+        const collected = yield* runWatcher.collect({ dryRun: options.dryRun })
+        const ignoring = yield* ignored
+        const dropped = new Set(
+          collected.deliveries
+            .filter((delivery) => globsMatch(ignoring, delivery.occurrence.repo))
+            .map((delivery) => delivery.occurrence.key)
+        )
+        const deliveries = collected.deliveries.filter((delivery) => !dropped.has(delivery.occurrence.key))
+        const recent = collected.recent.filter((run) => !dropped.has(run.key))
         if (deliveries.length === 0) return deliveries
 
         const [found, claims] = yield* Effect.all([placed(), store.claims], { concurrency: 2 })
