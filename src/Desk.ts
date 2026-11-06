@@ -1,7 +1,9 @@
 import { DateTime, Option, Schema } from "effect"
 
 import { AgentId, IsoTime, type Login, NodeId, Text } from "./Brands.ts"
+import { globsMatch } from "./Fields.ts"
 import type { Item, PullRequest } from "./GitHub.ts"
+import type { DeskConfig } from "./Rules.ts"
 
 export const DeskState = Schema.Struct({ agent: AgentId, since: IsoTime, handled: Schema.Array(NodeId) })
 export type DeskState = typeof DeskState.Type
@@ -24,14 +26,18 @@ const asksForReview = (from: readonly Login[], desk: DeskState) => (item: Item) 
   return from.some((login) => sameLogin(login, item.author))
 }
 
-export const reviewRequests = (pulls: readonly PullRequest[], from: readonly Login[], desk: DeskState): readonly ReviewRequest[] =>
-  pulls
-    .filter((pull) => pull.role === "reviewer")
-    .flatMap((pull) => {
-      const items = pull.items.filter(asksForReview(from, desk))
+const deskTakes = (config: DeskConfig) => (pull: PullRequest) => {
+  if (pull.role !== "reviewer") return false
 
-      return items.length === 0 ? [] : [{ pull, items }]
-    })
+  return globsMatch(config.repos, pull.repo)
+}
+
+export const reviewRequests = (pulls: readonly PullRequest[], config: DeskConfig, desk: DeskState): readonly ReviewRequest[] =>
+  pulls.filter(deskTakes(config)).flatMap((pull) => {
+    const items = pull.items.filter(asksForReview(config.from, desk))
+
+    return items.length === 0 ? [] : [{ pull, items }]
+  })
 
 export const handledAfter = (desk: DeskState, requests: readonly ReviewRequest[]): DeskState => ({
   ...desk,

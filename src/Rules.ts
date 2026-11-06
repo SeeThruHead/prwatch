@@ -57,7 +57,7 @@ export type Rule = typeof Rule.Type
 export const Delivery = Schema.NonEmptyArray(HostName)
 export type Delivery = typeof Delivery.Type
 
-export const DeskConfig = Schema.Struct({ from: Schema.Array(Login) })
+export const DeskConfig = Schema.Struct({ from: Schema.NonEmptyArray(Login), repos: Schema.NonEmptyArray(Glob) })
 export type DeskConfig = typeof DeskConfig.Type
 
 export const WatchRules = Schema.Struct({

@@ -30,6 +30,7 @@ import {
   branchNotification,
   deskMessage,
   deskNotification,
+  fromOutside,
   notification,
   runMessage,
   runNotification,
@@ -282,6 +283,8 @@ export class Watcher extends Context.Service<
       const runWatcher = yield* RunWatcher
       const config = yield* RulesConfig
 
+      const deliver = (agent: AgentId, message: Text) => host.deliver(agent, fromOutside(message))
+
       const placed = Effect.fn("Watcher.placed")(function* () {
         const agents = yield* host.agents.pipe(
           Effect.tapError((error) => Effect.logWarning(error.message)),
@@ -319,7 +322,7 @@ export class Watcher extends Context.Service<
         yield* Effect.forEach(
           delivery.agents,
           (agent) =>
-            host.deliver(agent.id, message).pipe(
+            deliver(agent.id, message).pipe(
               Effect.tapError((error) => Effect.logWarning(error.message)),
               Effect.ignore
             ),
@@ -364,7 +367,7 @@ export class Watcher extends Context.Service<
         yield* Effect.forEach(
           agents,
           (agent) =>
-            host.deliver(agent.id, message).pipe(
+            deliver(agent.id, message).pipe(
               Effect.tapError((error) => Effect.logWarning(error.message)),
               Effect.ignore
             ),
@@ -402,13 +405,13 @@ export class Watcher extends Context.Service<
       })
 
       const sendRequest = Effect.fn("Watcher.sendRequest")(function* (request: ReviewRequest, desk: Agent | undefined, dryRun: boolean) {
-        const message = deskMessage(request.pull, request.items, DESK_INSTRUCTIONS)
+        const message = deskMessage(request.pull, requesters(request), DESK_INSTRUCTIONS)
         const { title, body } = deskNotification(request.pull, requesters(request), desk !== undefined)
 
         if (dryRun) return yield* Effect.log(`[dry run] to ${desk?.label ?? "nobody"} + notify\n${message}`)
 
         if (desk !== undefined)
-          yield* host.deliver(desk.id, message).pipe(
+          yield* deliver(desk.id, message).pipe(
             Effect.tapError((error) => Effect.logWarning(error.message)),
             Effect.ignore
           )
@@ -430,7 +433,7 @@ export class Watcher extends Context.Service<
         const state = yield* store.desk
         if (wanted === undefined || state === undefined) return nothing
 
-        const requests = reviewRequests(pulls, wanted.from, state)
+        const requests = reviewRequests(pulls, wanted, state)
         if (requests.length === 0) return nothing
 
         const desk = found.agents.filter(reachable).find((agent) => answersTo(agent).includes(state.agent))
@@ -476,7 +479,7 @@ export class Watcher extends Context.Service<
         yield* Effect.forEach(
           agents,
           (agent) =>
-            host.deliver(agent.id, message).pipe(
+            deliver(agent.id, message).pipe(
               Effect.tapError((error) => Effect.logWarning(error.message)),
               Effect.ignore
             ),
