@@ -70,6 +70,13 @@ describe("reviewRequests", () => {
     expect(requestedIds([elsewhere])).toEqual([])
   })
 
+  it("asks once per pull request, leaving later mentions on it to its updates", () => {
+    const handled = handledAfter(desk, reviewRequests([reviewing], config, desk))
+    const again = item({ id: "c5", kind: "comment", author: "alex", body: "@me this one too", involvesYou: true, mentionsYou: true })
+
+    expect(requestedIds([pull({ role: "reviewer", items: [asked, again] })], handled)).toEqual([])
+  })
+
   it("asks only once for each mention", () => {
     const handled = handledAfter(desk, reviewRequests([reviewing], config, desk))
 

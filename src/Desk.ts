@@ -9,7 +9,8 @@ export const DeskState = Schema.Struct({
   agent: AgentId,
   since: IsoTime,
   handled: Schema.Array(NodeId),
-  routed: Schema.optionalKey(Schema.Array(PrKey))
+  routed: Schema.optionalKey(Schema.Array(PrKey)),
+  requested: Schema.optionalKey(Schema.Array(PrKey))
 })
 export type DeskState = typeof DeskState.Type
 
@@ -31,14 +32,15 @@ const asksForReview = (from: readonly Login[], desk: DeskState) => (item: Item) 
   return from.some((login) => sameLogin(login, item.author))
 }
 
-const deskTakes = (config: DeskConfig) => (pull: PullRequest) => {
+const deskTakes = (config: DeskConfig, desk: DeskState) => (pull: PullRequest) => {
   if (pull.role !== "reviewer") return false
+  if ((desk.requested ?? []).includes(pull.key)) return false
 
   return globsMatch(config.repos, pull.repo)
 }
 
 export const reviewRequests = (pulls: readonly PullRequest[], config: DeskConfig, desk: DeskState): readonly ReviewRequest[] =>
-  pulls.filter(deskTakes(config)).flatMap((pull) => {
+  pulls.filter(deskTakes(config, desk)).flatMap((pull) => {
     const items = pull.items.filter(asksForReview(config.from, desk))
 
     return items.length === 0 ? [] : [{ pull, items }]
@@ -46,7 +48,8 @@ export const reviewRequests = (pulls: readonly PullRequest[], config: DeskConfig
 
 export const handledAfter = (desk: DeskState, requests: readonly ReviewRequest[]): DeskState => ({
   ...desk,
-  handled: [...desk.handled, ...requests.flatMap((request) => request.items.map((item) => item.id))].slice(-REMEMBERED)
+  handled: [...desk.handled, ...requests.flatMap((request) => request.items.map((item) => item.id))].slice(-REMEMBERED),
+  requested: [...(desk.requested ?? []), ...requests.map((request) => request.pull.key)].slice(-REMEMBERED)
 })
 
 export const routedTo = (desk: DeskState, key: PrKey): DeskState => ({
