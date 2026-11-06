@@ -399,12 +399,16 @@ const deskOpen = Command.make("open", { agent: agentFlag }, ({ agent }) =>
     const desk = yield* (yield* RulesConfig).desk
     yield* store.saveDesk({ agent: agentId(pane), since: isoTime(yield* DateTime.now), handled: [] })
     yield* Console.log(
-      desk === undefined || desk.from.length === 0
-        ? `${pane} is the review desk, but nobody can reach it yet: add "desk": { "from": ["login"] } to config.json`
-        : `${pane} is the review desk for review requests from ${desk.from.join(", ")}`
+      desk === undefined
+        ? `${pane} is the review desk, but nobody can reach it yet: add "desk": { "from": ["login"], "repos": ["owner/name"] } to config.json`
+        : `${pane} is the review desk for review requests from ${desk.from.join(", ")} in ${desk.repos.join(", ")}`
     )
   }).pipe(Effect.provide(callerLayer))
-).pipe(Command.withDescription("make this pane the review desk: mentions from people in desk.from arrive here as review requests"))
+).pipe(
+  Command.withDescription(
+    "make this pane the review desk: mentions from people in desk.from, on pull requests in desk.repos, arrive here as review requests"
+  )
+)
 
 const deskClose = Command.make("close", {}, () =>
   Effect.gen(function* () {
@@ -417,7 +421,10 @@ const deskShow = Command.make("show", {}, () =>
   Effect.gen(function* () {
     const desk = yield* (yield* Store).desk
     const wanted = yield* (yield* RulesConfig).desk
-    const from = wanted === undefined || wanted.from.length === 0 ? "nobody (set desk.from in config.json)" : wanted.from.join(", ")
+    const from =
+      wanted === undefined
+        ? "nobody (set desk.from and desk.repos in config.json)"
+        : `${wanted.from.join(", ")} in ${wanted.repos.join(", ")}`
 
     yield* Console.log(
       desk === undefined
