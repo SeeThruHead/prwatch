@@ -20,7 +20,7 @@ import { HerdrHost } from "../src/hosts/Herdr.ts"
 import { OrcaHost } from "../src/hosts/Orca.ts"
 import { TmuxHost } from "../src/hosts/Tmux.ts"
 import * as Bookkeeping from "../src/Bookkeeping.ts"
-import { DEFAULT_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
+import { DEFAULT_INSTRUCTIONS, DESK_REVIEW_INSTRUCTIONS, REVIEW_INSTRUCTIONS } from "../src/Message.ts"
 import { type Multiplexer, planOf } from "../src/Delivery.ts"
 import { type Agent, Host } from "../src/Host.ts"
 import { NoHost } from "../src/hosts/None.ts"
@@ -434,9 +434,32 @@ const deskShow = Command.make("show", {}, () =>
   }).pipe(Effect.provide(Layer.mergeAll(Store.layer, RulesConfig.layer)))
 ).pipe(Command.withDescription("show which pane is the review desk and whose requests it takes"))
 
+const routeTarget = Flag.String("agent").pipe(Flag.withDescription("the pane to hand the pull request to, such as w1:p3"))
+
+const ROUTE_ERRORS = {
+  "no desk": "no review desk is open; run prwatch desk open first",
+  "not watched": "that pull request is not being watched",
+  "no agent": "no agent is running in that pane"
+} as const
+
+const deskRoute = Command.make("route", { pull: pullArgument, agent: routeTarget }, ({ pull, agent }) =>
+  Effect.gen(function* () {
+    const key = yield* pullKey(pull)
+    const wanted = yield* (yield* RulesConfig).desk
+    const outcome = yield* Bookkeeping.route(key, agentId(agent), wanted?.reviewInstructions ?? DESK_REVIEW_INSTRUCTIONS)
+    if (outcome !== "routed") return yield* Console.error(`prwatch desk route: ${ROUTE_ERRORS[outcome]}`)
+
+    yield* Console.log(`${agent} now reviews ${key} and gets its updates`)
+  }).pipe(Effect.provide(callerLayer))
+).pipe(
+  Command.withDescription(
+    "hand a pull request the desk received to another agent: it is claimed for that pane and sent the request, with the caution line"
+  )
+)
+
 const desk = Command.make("desk").pipe(
   Command.withDescription("a pane that takes review requests: an @mention from someone on your list claims the pull request for it"),
-  Command.withSubcommands([deskOpen, deskShow, deskClose])
+  Command.withSubcommands([deskOpen, deskShow, deskRoute, deskClose])
 )
 
 const config = Command.make("config").pipe(

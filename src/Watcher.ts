@@ -4,7 +4,8 @@ import { type BranchChange, type BranchKey, type Pending, type SeenBranches, bra
 import { type Change, type Seen, anyNeedsYou, changesSince, isLifecycle, snapshotOf } from "./Changes.ts"
 import { RulesConfig } from "./Config.ts"
 import { globsMatch } from "./Fields.ts"
-import { type ReviewRequest, handledAfter, requesters, reviewRequests } from "./Desk.ts"
+import { type DeskState, type ReviewRequest, handledAfter, isRouted, requesters, reviewRequests } from "./Desk.ts"
+import type { DeskConfig } from "./Rules.ts"
 import { Gitea } from "./Gitea.ts"
 import { GitHub, type PullRequest, type Stamp } from "./GitHub.ts"
 import { type Agent, Host } from "./Host.ts"
@@ -26,6 +27,7 @@ import {
 import {
   BRANCH_INSTRUCTIONS,
   DESK_INSTRUCTIONS,
+  DESK_REVIEW_INSTRUCTIONS,
   RUN_INSTRUCTIONS,
   agentMessage,
   branchMessage,
@@ -107,6 +109,15 @@ export const runRecipients = (delivery: RunDelivery, found: Found, claims: Claim
   if (delivery.linked.claimantsOnly) return byClaim.filter(reachable)
 
   return [...byClaim, ...found.placed.filter(onRun(delivery)).filter((agent) => !isClaimed(agent))].filter(reachable)
+}
+
+type DeskView = { readonly wanted: DeskConfig | undefined; readonly state: DeskState | undefined }
+
+export const instructionsFor = (pull: PullRequest, options: Options, desk: DeskView): Text => {
+  if (pull.role !== "reviewer") return options.instructions
+  if (!isRouted(desk.state, pull.key)) return options.reviewInstructions
+
+  return desk.wanted?.reviewInstructions ?? DESK_REVIEW_INSTRUCTIONS
 }
 
 export const watchedPulls = (pulls: readonly PullRequest[], ignore: readonly Glob[]) =>
@@ -314,12 +325,8 @@ export class Watcher extends Context.Service<
         return { agents, placed: located.flatMap(Option.toArray) }
       })
 
-      const send = Effect.fn("Watcher.send")(function* (delivery: Delivery, options: Options) {
-        const message = agentMessage(
-          delivery.pull,
-          delivery.changes,
-          delivery.pull.role === "reviewer" ? options.reviewInstructions : options.instructions
-        )
+      const send = Effect.fn("Watcher.send")(function* (delivery: Delivery, options: Options, desk: DeskView) {
+        const message = agentMessage(delivery.pull, delivery.changes, instructionsFor(delivery.pull, options, desk))
         const { title, body } = notification(delivery.pull, delivery.changes)
         const alert = delivery.needsYou || delivery.agents.length === 0 || delivery.changes.some(isLifecycle)
 
@@ -413,8 +420,13 @@ export class Watcher extends Context.Service<
         yield* store.saveBranches(keptBranches(seen, targets, Object.fromEntries(read.map((entry) => [entry.target.key, entry.next]))))
       })
 
-      const sendRequest = Effect.fn("Watcher.sendRequest")(function* (request: ReviewRequest, desk: Agent | undefined, dryRun: boolean) {
-        const message = deskMessage(request.pull, requesters(request), DESK_INSTRUCTIONS)
+      const sendRequest = Effect.fn("Watcher.sendRequest")(function* (
+        request: ReviewRequest,
+        desk: Agent | undefined,
+        instructions: Text,
+        dryRun: boolean
+      ) {
+        const message = deskMessage(request.pull, requesters(request), instructions)
         const { title, body } = deskNotification(request.pull, requesters(request), desk !== undefined)
 
         if (dryRun) return yield* Effect.log(`[dry run] to ${desk?.label ?? "nobody"} + notify\n${message}`)
@@ -432,27 +444,32 @@ export class Watcher extends Context.Service<
         found: Found,
         claims: Claims,
         at: IsoTime,
-        dryRun: boolean
+        dryRun: boolean,
+        { wanted, state }: DeskView
       ) {
         const nothing = { claims, served: [], desk: undefined }
-        const wanted = yield* config.desk.pipe(
-          Effect.tapError((error) => Effect.logWarning(error.message)),
-          Effect.orElseSucceed(() => undefined)
-        )
-        const state = yield* store.desk
         if (wanted === undefined || state === undefined) return nothing
 
         const requests = reviewRequests(pulls, wanted, state)
         if (requests.length === 0) return nothing
 
         const desk = found.agents.filter(reachable).find((agent) => answersTo(agent).includes(state.agent))
-        yield* Effect.forEach(requests, (request) => sendRequest(request, desk, dryRun), { discard: true })
+        const instructions = wanted.instructions ?? DESK_INSTRUCTIONS
+        yield* Effect.forEach(requests, (request) => sendRequest(request, desk, instructions, dryRun), { discard: true })
         if (dryRun) return nothing
 
         yield* store.saveDesk(handledAfter(state, requests))
         if (desk === undefined) return nothing
 
         return { claims: claimedFor(claims, requests, state.agent, at), served: requests, desk }
+      })
+
+      const deskView = Effect.all({
+        wanted: config.desk.pipe(
+          Effect.tapError((error) => Effect.logWarning(error.message)),
+          Effect.orElseSucceed(() => undefined)
+        ),
+        state: store.desk
       })
 
       const ignored = config.ignore.pipe(
@@ -464,10 +481,11 @@ export class Watcher extends Context.Service<
         const pulls = watchedPulls(fetched, yield* ignored)
         const [seen, previous, found, before] = yield* Effect.all([store.seen, store.status, placed(), store.claims], { concurrency: 4 })
         const at = isoTime(yield* DateTime.now)
-        const { claims, served, desk } = yield* serveDesk(pulls, found, before, at, options.dryRun)
+        const view = yield* deskView
+        const { claims, served, desk } = yield* serveDesk(pulls, found, before, at, options.dryRun, view)
         const deliveries = withoutDesk(plan(pulls, seen, found, claims), served, desk)
 
-        yield* Effect.forEach(deliveries, (delivery) => send(delivery, options), { discard: true })
+        yield* Effect.forEach(deliveries, (delivery) => send(delivery, options, view), { discard: true })
         if (options.dryRun) return deliveries
 
         yield* store.saveSeen(nextSeen(pulls, seen))

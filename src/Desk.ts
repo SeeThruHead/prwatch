@@ -1,11 +1,16 @@
 import { DateTime, Option, Schema } from "effect"
 
-import { AgentId, IsoTime, type Login, NodeId, Text } from "./Brands.ts"
+import { AgentId, IsoTime, type Login, NodeId, PrKey, Text } from "./Brands.ts"
 import { globsMatch } from "./Fields.ts"
 import type { Item, PullRequest } from "./GitHub.ts"
 import type { DeskConfig } from "./Rules.ts"
 
-export const DeskState = Schema.Struct({ agent: AgentId, since: IsoTime, handled: Schema.Array(NodeId) })
+export const DeskState = Schema.Struct({
+  agent: AgentId,
+  since: IsoTime,
+  handled: Schema.Array(NodeId),
+  routed: Schema.optionalKey(Schema.Array(PrKey))
+})
 export type DeskState = typeof DeskState.Type
 
 export type ReviewRequest = { readonly pull: PullRequest; readonly items: readonly Item[] }
@@ -43,5 +48,12 @@ export const handledAfter = (desk: DeskState, requests: readonly ReviewRequest[]
   ...desk,
   handled: [...desk.handled, ...requests.flatMap((request) => request.items.map((item) => item.id))].slice(-REMEMBERED)
 })
+
+export const routedTo = (desk: DeskState, key: PrKey): DeskState => ({
+  ...desk,
+  routed: [...(desk.routed ?? []).filter((entry) => entry !== key), key].slice(-REMEMBERED)
+})
+
+export const isRouted = (desk: DeskState | undefined, key: PrKey) => (desk?.routed ?? []).includes(key)
 
 export const requesters = (request: ReviewRequest) => Text.make([...new Set(request.items.map((item) => item.author))].join(", "))

@@ -1,6 +1,9 @@
 import { DateTime, Effect } from "effect"
 
-import { type AgentId, type PrKey, isoTime } from "./Brands.ts"
+import { type AgentId, type PrKey, type Text, isoTime } from "./Brands.ts"
+import { routedTo } from "./Desk.ts"
+import { type Agent, Host } from "./Host.ts"
+import { fromOutside, routeMessage } from "./Message.ts"
 import { initial } from "./Runs.ts"
 import type { Pending } from "./RunState.ts"
 import { Store } from "./Store.ts"
@@ -48,4 +51,31 @@ export const watchRun = Effect.fn("Bookkeeping.watchRun")(function* (pending: Pe
   const agents = [...(state.watches[pending.key]?.agents ?? []).filter((entry) => entry !== agent), agent]
 
   yield* store.saveRuns({ ...state, watches: { ...state.watches, [pending.key]: { pending, agents } } })
+})
+
+export type RouteOutcome = "routed" | "no desk" | "not watched" | "no agent"
+
+const ROUTED: RouteOutcome = "routed"
+const NO_DESK: RouteOutcome = "no desk"
+const NOT_WATCHED: RouteOutcome = "not watched"
+const NO_AGENT: RouteOutcome = "no agent"
+
+export const route = Effect.fn("Bookkeeping.route")(function* (key: PrKey, target: AgentId, instructions: Text) {
+  const store = yield* Store
+  const host = yield* Host
+  const desk = yield* store.desk
+  if (desk === undefined) return NO_DESK
+
+  const watched = (yield* store.status)?.pulls.find((entry) => entry.key === key)
+  if (watched === undefined) return NOT_WATCHED
+
+  const panes = yield* host.agents.pipe(Effect.orElseSucceed((): readonly Agent[] => []))
+  if (!panes.some((pane) => pane.id === target)) return NO_AGENT
+
+  yield* release([key], desk.agent)
+  yield* claim([key], target)
+  yield* store.saveDesk(routedTo(desk, key))
+  yield* host.deliver(target, fromOutside(routeMessage(key, watched.url, instructions)))
+
+  return ROUTED
 })
